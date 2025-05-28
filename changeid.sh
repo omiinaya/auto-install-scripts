@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
+# Automatically detects the container's storage from its configuration
 # Usage: ./change_ct_id.sh <current_ct_id> <new_ct_id>
 
 # Check if exactly 2 arguments are provided
@@ -18,9 +19,8 @@ if ! [[ "$CURRENT_CT_ID" =~ ^[0-9]+$ ]] || ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; the
     exit 1
 fi
 
-# Define storage (modify these as needed)
+# Define backup storage (modify if needed)
 BACKUP_STORAGE="local"
-CONTAINER_STORAGE="local-lvm"
 BACKUP_DIR="/var/lib/vz/dump"
 
 # Check if running as root
@@ -53,15 +53,31 @@ if ! pvesm status | grep -q "^$BACKUP_STORAGE"; then
     exit 1
 fi
 
-# Check if container storage exists
+# Detect container storage from configuration
+CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: Configuration file $CONFIG_FILE not found."
+    exit 1
+fi
+
+# Extract storage from rootfs line (e.g., rootfs: local-zfs:subvol-139-disk-0,size=8G)
+CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
+if [ -z "$CONTAINER_STORAGE" ]; then
+    echo "Error: Could not detect container storage from $CONFIG_FILE."
+    exit 1
+fi
+
+# Verify container storage exists
 if ! pvesm status | grep -q "^$CONTAINER_STORAGE"; then
     echo "Error: Container storage '$CONTAINER_STORAGE' not found."
     exit 1
 fi
 
+echo "Detected container storage: $CONTAINER_STORAGE"
+
 # Check if the container is unprivileged
 UNPRIVILEGED=""
-if grep -q "unprivileged: 1" "/etc/pve/lxc/$CURRENT_CT_ID.conf"; then
+if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
     UNPRIVILEGED="--unprivileged"
     echo "Detected unprivileged container. Will use --unprivileged flag for restore."
 fi
@@ -104,20 +120,6 @@ pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVIL
 # Start the new container
 echo "Starting container $NEW_CT_ID..."
 pct start "$NEW_CT_ID" || {
-    echo "Error: Failed to start container $NEW_CT_ID."
-    exit 1
-}
-
-# Verify the container is running
-if pct status "$NEW_CT_ID" | grep -q "running"; then
-    echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
-else
-    echo "Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'."
-    exit 1
-fi
-
-# Clean up backup file (optional, comment out if you want to keep it)
-# echo "Cleaning up backup file $BACKUP_FILE..."
-# rm -f "$BACKUP_FILE"
-
+    echo "Error: Failed### Starting container 141...
+Success: Container ID changed from 139 to 141 and is running.
 exit 0
