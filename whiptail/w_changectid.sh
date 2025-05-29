@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script to change the ID of a Proxmox LXC container (CT) or virtual machine (VM) using backup and restore
 # Uses whiptail to select the CT/VM and new ID
-# Automatically configures backup storage if none exists, using dynamic storage names
+# Automatically configures backup storage within the same storage as the CT/VM, or falls back to another storage
 # Checks disk space before backup and restore, using ZFS pool space to avoid subvolume quotas
 # Validates ZFS dataset mountpoints for dir storages
 # Skips stop if CT/VM is already stopped, dynamically finds or creates backup
@@ -226,14 +226,14 @@ check_disk_space() {
         fi
         if [ -z "$available_space" ]; then
             log "Error: Could not determine available space for ZFS storage '$storage'."
-            exit 2
+            return 1
         fi
     else
         debug_log "Non-ZFS storage detected, attempting to get path"
         if [ $pvesm_get_exit -ne 0 ]; then
             log "Error: Could not retrieve storage info for '$storage'."
             debug_log "pvesm get failed with exit code $pvesm_get_exit"
-            exit 2
+            return 1
         fi
         local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
         if [ -z "$storage_path" ] && [ "$storage_type" = "nfs" ]; then
@@ -270,8 +270,7 @@ check_disk_space() {
                         debug_log "zfs mount exit code: $zfs_mount_exit"
                         if [ $zfs_mount_exit -ne 0 ]; then
                             log "Error: Could not mount ZFS dataset '$dataset' for storage '$storage'."
-                            debug_log "Failed to mount $dataset"
-                            exit 2
+                            return 1
                         fi
                     fi
                 fi
@@ -284,9 +283,7 @@ check_disk_space() {
         debug_log "Storage path: $storage_path"
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
             log "Error: Invalid or inaccessible storage path for '$storage'."
-            log "Hint: Check the storage configuration with 'pvesm get $storage' and ensure the path is correct in /etc/pve/storage.cfg."
-            debug_log "Storage path invalid: $storage_path"
-            exit 2
+            return 1
         fi
         debug_log "Running: df --block-size=1 --output=avail $storage_path"
         available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
@@ -294,86 +291,225 @@ check_disk_space() {
         debug_log "df exit code: $df_exit, output: $available_space"
         if [ $df_exit -ne 0 ] || [ -z "$available_space" ] || ! [[ "$available_space" =~ ^[0-9]+$ ]]; then
             log "Error: Could not determine available space for storage '$storage'."
-            debug_log "Invalid df output: $available_space"
-            exit 2
+            return 1
         fi
         debug_log "Non-ZFS storage path: $storage_path, available space: $available_space bytes"
     fi
 
     debug_log "Comparing available_space=$available_space with required_space=$required_space"
     if [ "$available_space" -lt "$required_space" ]; then
-        local other_storages=$(pvesm status | grep -v "^$storage" | grep "active" | awk '{print $1 " (" $2 ", " $6/1024 " MB available)"}')
-        local quota_hint=""
+        log "Insufficient disk space on storage '$storage'."
+        log "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
+        # Attempt to adjust ZFS quotas if applicable
         if [ "$storage_type" = "dir" ]; then
-            # Check for a ZFS dataset quota
             local zfs_list=$(zfs list -H -o name 2>/dev/null)
             local dataset=$(echo "$zfs_list" | grep -E "(rpool|local-zfs-2)/backup(-[0-9]+)?$" | head -n 1)
             if [ -n "$dataset" ]; then
+                debug_log "Checking ZFS quotas for dataset $dataset"
                 local dataset_quota=$(zfs get -p -H -o value quota "$dataset" 2>/dev/null)
-                if [ "$dataset_quota" != "none" ] && [ -n "$dataset_quota" ]; then
-                    quota_hint="ZFS dataset '$dataset' has a quota of $((dataset_quota / 1024 / 1024)) MB. Increase it with 'zfs set quota=<new_size> $dataset' or remove it with 'zfs set quota=none $dataset'."
+                local dataset_refquota=$(zfs get -p -H -o value refquota "$dataset" 2>/dev/null)
+                debug_log "Dataset quota: $dataset_quota, refquota: $dataset_refquota"
+                # Calculate needed quota (required_space + 10% buffer)
+                local needed_quota=$((required_space + required_space / 10))
+                local needed_quota_mb=$((needed_quota / 1024 / 1024))
+                # Check parent pool space
+                local parent_pool=$(echo "$dataset" | cut -d'/' -f1)
+                local pool_available=$(zfs get -p -H -o value available "$parent_pool" 2>/dev/null)
+                debug_log "Parent pool $parent_pool available space: $pool_available bytes"
+                if [ -n "$pool_available" ] && [ "$pool_available" -gt "$needed_quota" ]; then
+                    if [ "$dataset_quota" != "none" ] && [ -n "$dataset_quota" ] && [ "$dataset_quota" -ne 0 ]; then
+                        log "Adjusting quota on $dataset to $needed_quota_mb MB"
+                        zfs set quota=${needed_quota_mb}M "$dataset" 2>/dev/null
+                        local quota_set_exit=$?
+                        debug_log "zfs set quota exit code: $quota_set_exit"
+                    fi
+                    if [ "$dataset_refquota" != "none" ] && [ -n "$dataset_refquota" ] && [ "$dataset_refquota" -ne 0 ]; then
+                        log "Adjusting refquota on $dataset to $needed_quota_mb MB"
+                        zfs set refquota=${needed_quota_mb}M "$dataset" 2>/dev/null
+                        local refquota_set_exit=$?
+                        debug_log "zfs set refquota exit code: $refquota_set_exit"
+                    fi
+                    # Recheck available space after adjustment
+                    available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
+                    debug_log "Rechecked available space after quota adjustment: $available_space bytes"
+                else
+                    debug_log "Parent pool $parent_pool does not have enough space to adjust quota"
                 fi
             fi
         fi
-        log "Error: Insufficient disk space on storage '$storage'."
-        log "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
-        if [ -n "$quota_hint" ]; then
-            log "Hint: $quota_hint"
+        if [ "$available_space" -lt "$required_space" ]; then
+            return 1
         fi
-        log "Hint: Free up space on '$storage' (e.g., remove old backups or snapshots), or use a different backup storage."
-        if [ -n "$other_storages" ]; then
-            log "Other available storages: $other_storages"
-            log "You can remove the current backup storage with 'pvesm remove $storage' and rerun the script to try another."
-        fi
-        exit 2
     fi
     log "Sufficient disk space on storage '$storage': $((available_space / 1024 / 1024)) MB available"
+    return 0
 }
 
 # Function to configure backup storage
 configure_backup_storage() {
-    debug_log "Checking for backup storage"
-    local backup_storages=$(pvesm status | grep "backup" | awk '{print $1}')
-    debug_log "Found backup storages: $backup_storages"
-    if [ -n "$backup_storages" ]; then
-        # Try each backup storage until one has sufficient space
-        for storage in $backup_storages; do
-            debug_log "Trying backup storage: $storage"
-            BACKUP_STORAGE="$storage"
-            # Check disk space for this storage
-            local space_check=$(check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" 2>&1)
-            local space_check_exit=$?
-            if [ $space_check_exit -eq 0 ]; then
-                debug_log "Backup storage $BACKUP_STORAGE has sufficient space"
-                return 0
-            else
-                debug_log "Backup storage $BACKUP_STORAGE failed space check: $space_check"
-                # Remove this storage from consideration and try the next one
-                pvesm set "$BACKUP_STORAGE" --content images 2>/dev/null
-                BACKUP_STORAGE=""
-            fi
-        done
-    fi
+    debug_log "Configuring backup storage for $ENTITY_TYPE $CURRENT_ID on $CONTAINER_STORAGE"
 
-    debug_log "No suitable backup storage found, attempting to configure one"
-    # Try NFS storages
-    local nfs_storages=$(pvesm status | grep "nfs" | awk '{print $1}')
-    debug_log "Available NFS storages: $nfs_storages"
-    if [ -n "$nfs_storages" ]; then
-        local nfs_storage=$(echo "$nfs_storages" | head -n 1)
-        debug_log "Configuring $nfs_storage for backups"
-        pvesm set "$nfs_storage" --content backup 2>/dev/null
+    # First, try to use the same storage as the CT/VM
+    debug_log "Attempting to use $CONTAINER_STORAGE for backups"
+    local container_storage_type=$(pvesm status | grep "^$CONTAINER_STORAGE" | awk '{print $2}')
+    debug_log "Container storage type: $container_storage_type"
+
+    # Check if CONTAINER_STORAGE can be used for backups
+    if pvesm status | grep "^$CONTAINER_STORAGE" | grep -q "backup"; then
+        debug_log "$CONTAINER_STORAGE already supports backup content"
+        BACKUP_STORAGE="$CONTAINER_STORAGE"
+    else
+        debug_log "Setting $CONTAINER_STORAGE to support backup content"
+        pvesm set "$CONTAINER_STORAGE" --content backup 2>/dev/null
         local set_exit=$?
-        debug_log "pvesm set $nfs_storage exit code: $set_exit"
-        if [ $set_exit -eq 0 ] && pvesm status | grep "^$nfs_storage" | grep -q "backup"; then
-            BACKUP_STORAGE="$nfs_storage"
-            debug_log "Successfully configured $nfs_storage for backups"
-            return 0
+        debug_log "pvesm set $CONTAINER_STORAGE exit code: $set_exit"
+        if [ $set_exit -eq 0 ] && pvesm status | grep "^$CONTAINER_STORAGE" | grep -q "backup"; then
+            BACKUP_STORAGE="$CONTAINER_STORAGE"
+        else
+            debug_log "Failed to set $CONTAINER_STORAGE for backups, proceeding to create a backup location"
         fi
-        debug_log "Failed to configure $nfs_storage for backups"
     fi
 
-    # Try creating a ZFS dataset
+    # If CONTAINER_STORAGE can be used, check its space
+    if [ -n "$BACKUP_STORAGE" ]; then
+        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+        local space_check_exit=$?
+        if [ $space_check_exit -eq 0 ]; then
+            debug_log "Using $BACKUP_STORAGE for backups"
+            return 0
+        else
+            debug_log "$BACKUP_STORAGE does not have sufficient space, proceeding to create a backup location"
+            # Remove backup content from CONTAINER_STORAGE to try creating a new backup location
+            pvesm set "$CONTAINER_STORAGE" --content images 2>/dev/null
+            BACKUP_STORAGE=""
+        fi
+    fi
+
+    # Create a backup location within the same storage
+    if [ -z "$BACKUP_STORAGE" ]; then
+        local timestamp=$(date +%s)
+        if [ "$container_storage_type" = "zfs" ] || [ "$container_storage_type" = "zfspool" ]; then
+            debug_log "Creating a new ZFS dataset for backups in $CONTAINER_STORAGE"
+            local zfs_pool=$(pvesm get "$CONTAINER_STORAGE" --human-readable false 2>/dev/null | grep '^pool' | awk '{print $2}')
+            if [ -z "$zfs_pool" ]; then
+                zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup' | head -n 1)
+            fi
+            if [ -n "$zfs_pool" ]; then
+                local backup_dataset="backup-$timestamp"
+                local full_dataset="$zfs_pool/$backup_dataset"
+                debug_log "Attempting to create ZFS dataset $full_dataset"
+                zfs create "$full_dataset" 2>/dev/null
+                local zfs_create_exit=$?
+                debug_log "zfs create exit code: $zfs_create_exit"
+                if [ $zfs_create_exit -eq 0 ]; then
+                    local backup_storage_name="backup-$timestamp"
+                    debug_log "Configuring ZFS dataset as directory storage: $backup_storage_name"
+                    pvesm add dir "$backup_storage_name" --path "/$full_dataset" --content backup --is_mountpoint yes 2>/dev/null
+                    local pvesm_add_exit=$?
+                    debug_log "pvesm add $backup_storage_name exit code: $pvesm_add_exit"
+                    if [ $pvesm_add_exit -eq 0 ]; then
+                        BACKUP_STORAGE="$backup_storage_name"
+                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+                        local space_check_exit=$?
+                        if [ $space_check_exit -eq 0 ]; then
+                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
+                            return 0
+                        else
+                            debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
+                            pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                            zfs destroy "$full_dataset" 2>/dev/null
+                            BACKUP_STORAGE=""
+                        fi
+                    else
+                        zfs destroy "$full_dataset" 2>/dev/null
+                    fi
+                fi
+            fi
+        elif [ "$container_storage_type" = "nfs" ] || [ "$container_storage_type" = "dir" ]; then
+            debug_log "Attempting to create a backup subdirectory in $CONTAINER_STORAGE"
+            local storage_path=$(pvesm get "$CONTAINER_STORAGE" --human-readable false 2>/dev/null | grep '^path' | awk '{print $2}')
+            if [ -z "$storage_path" ] && [ "$container_storage_type" = "nfs" ]; then
+                storage_path=$(grep "$CONTAINER_STORAGE" /proc/mounts | awk '{print $2}' | head -n 1)
+            fi
+            if [ -z "$storage_path" ] && [ "$container_storage_type" = "dir" ]; then
+                local zfs_list=$(zfs list -H -o name 2>/dev/null)
+                local dataset=$(echo "$zfs_list" | grep -E "(rpool|local-zfs-2)/backup(-[0-9]+)?$" | head -n 1)
+                if [ -n "$dataset" ]; then
+                    local mountpoint=$(zfs get -p -H -o value mountpoint "$dataset" 2>/dev/null)
+                    if [ -n "$mountpoint" ] && [ "$mountpoint" != "none" ]; then
+                        storage_path="$mountpoint"
+                        if [ ! -d "$storage_path" ]; then
+                            zfs mount "$dataset" 2>/dev/null
+                        fi
+                    fi
+                else
+                    storage_path="/$(echo "$CONTAINER_STORAGE" | tr '-' '/')"
+                fi
+            fi
+            if [ -n "$storage_path" ] && [ -d "$storage_path" ]; then
+                local backup_dir="backup-$timestamp"
+                local backup_path="$storage_path/$backup_dir"
+                debug_log "Creating backup directory $backup_path"
+                mkdir -p "$backup_path" 2>/dev/null
+                local mkdir_exit=$?
+                debug_log "mkdir exit code: $mkdir_exit"
+                if [ $mkdir_exit -eq 0 ]; then
+                    local backup_storage_name="backup-$timestamp"
+                    debug_log "Configuring backup directory as storage: $backup_storage_name"
+                    pvesm add dir "$backup_storage_name" --path "$backup_path" --content backup --is_mountpoint no 2>/dev/null
+                    local pvesm_add_exit=$?
+                    debug_log "pvesm add $backup_storage_name exit code: $pvesm_add_exit"
+                    if [ $pvesm_add_exit -eq 0 ]; then
+                        BACKUP_STORAGE="$backup_storage_name"
+                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+                        local space_check_exit=$?
+                        if [ $space_check_exit -eq 0 ]; then
+                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
+                            return 0
+                        else
+                            debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
+                            pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                            rm -rf "$backup_path" 2>/dev/null
+                            BACKUP_STORAGE=""
+                        fi
+                    else
+                        rm -rf "$backup_path" 2>/dev/null
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    # If we can't use or create a backup location in CONTAINER_STORAGE, fall back to other storages
+    debug_log "Could not configure backup storage in $CONTAINER_STORAGE, falling back to other storages"
+    local other_storages=$(pvesm status | grep -v "^$CONTAINER_STORAGE" | grep "active" | awk '{print $1}')
+    debug_log "Other available storages: $other_storages"
+    for storage in $other_storages; do
+        debug_log "Trying backup storage: $storage"
+        if ! pvesm status | grep "^$storage" | grep -q "backup"; then
+            debug_log "Setting $storage to support backup content"
+            pvesm set "$storage" --content backup 2>/dev/null
+            local set_exit=$?
+            debug_log "pvesm set $storage exit code: $set_exit"
+            if [ $set_exit -ne 0 ] || ! pvesm status | grep "^$storage" | grep -q "backup"; then
+                debug_log "Failed to set $storage for backups, skipping"
+                continue
+            fi
+        fi
+        BACKUP_STORAGE="$storage"
+        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+        local space_check_exit=$?
+        if [ $space_check_exit -eq 0 ]; then
+            debug_log "Using $BACKUP_STORAGE for backups"
+            return 0
+        else
+            debug_log "$BACKUP_STORAGE does not have sufficient space, trying next storage"
+            pvesm set "$BACKUP_STORAGE" --content images 2>/dev/null
+            BACKUP_STORAGE=""
+        fi
+    done
+
+    # If no existing storage works, try creating a new ZFS dataset on a different pool
     local timestamp=$(date +%s)
     local backup_dataset="backup-$timestamp"
     local zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup' | head -n 1)
@@ -392,16 +528,22 @@ configure_backup_storage() {
             debug_log "pvesm add $backup_storage_name exit code: $pvesm_add_exit"
             if [ $pvesm_add_exit -eq 0 ]; then
                 BACKUP_STORAGE="$backup_storage_name"
-                debug_log "Successfully configured $backup_storage_name for backups"
-                return 0
+                check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+                local space_check_exit=$?
+                if [ $space_check_exit -eq 0 ]; then
+                    debug_log "Successfully configured $BACKUP_STORAGE for backups"
+                    return 0
+                else
+                    pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                    zfs destroy "$full_dataset" 2>/dev/null
+                fi
+            else
+                zfs destroy "$full_dataset" 2>/dev/null
             fi
-            debug_log "Failed to configure $backup_storage_name storage"
-            zfs destroy "$full_dataset" 2>/dev/null
         fi
-        debug_log "Failed to create ZFS dataset $full_dataset"
     fi
 
-    # Try local storage
+    # Final fallback: try local storage
     if pvesm status | grep -q "^local"; then
         debug_log "Configuring local storage for backups"
         pvesm set local --content backup 2>/dev/null
@@ -409,14 +551,16 @@ configure_backup_storage() {
         debug_log "pvesm set local exit code: $set_exit"
         if [ $set_exit -eq 0 ] && pvesm status | grep "^local" | grep -q "backup"; then
             BACKUP_STORAGE="local"
-            debug_log "Successfully configured local for backups"
-            return 0
+            check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+            local space_check_exit=$?
+            if [ $space_check_exit -eq 0 ]; then
+                debug_log "Successfully configured local for backups"
+                return 0
+            fi
         fi
-        debug_log "Failed to configure local for backups"
     fi
 
-    log "Error: Could not configure a storage for backups."
-    debug_log "Failed to configure any backup storage"
+    log "Error: Could not configure a storage for backups with sufficient space."
     exit 2
 }
 
@@ -452,6 +596,10 @@ debug_log "Required space after 20% overhead: $((REQUIRED_SPACE / 1024 / 1024)) 
 
 # Check disk space for backup
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
+if [ $? -ne 0 ]; then
+    log "Error: Source storage $CONTAINER_STORAGE does not have sufficient space for backup."
+    exit 2
+fi
 
 # Configure backup storage
 configure_backup_storage
@@ -459,6 +607,10 @@ configure_backup_storage
 # Check disk space for backup storage
 debug_log "Checking disk space for backup storage $BACKUP_STORAGE"
 check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+if [ $? -ne 0 ]; then
+    log "Error: Backup storage $BACKUP_STORAGE does not have sufficient space after configuration."
+    exit 2
+fi
 
 # Check if the CT is unprivileged (only for CTs)
 UNPRIVILEGED=""
@@ -547,6 +699,10 @@ fi
 # Check disk space for restore
 debug_log "Checking disk space for restore on $CONTAINER_STORAGE"
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
+if [ $? -ne 0 ]; then
+    log "Error: Source storage $CONTAINER_STORAGE does not have sufficient space for restore."
+    exit 2
+fi
 
 # Restore the CT/VM with the new ID
 log "Restoring $ENTITY_TYPE as $NEW_ID..."
