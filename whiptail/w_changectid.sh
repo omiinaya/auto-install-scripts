@@ -840,3 +840,5 @@ debug_log "Operation completed successfully"
 # debug_log "Cleaned up backup: $BACKUP_FILE"
 
 exit 0
+
+#if this doesnt work revert to before vm change
