@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
-# Uses whiptail to select the current container and input the new CT ID
-# Uses the container's storage for backup, checks disk space before backup and restore
+# Uses whiptail to select the current container, new CT ID, and backup storage (if needed)
+# Uses the container's storage for backup if valid, checks disk space before backup and restore
 # Skips stop if container is already stopped, dynamically finds or creates backup
 # Delays deletion of old container until new container is confirmed running
 
@@ -123,13 +123,24 @@ log "Detected container storage: $CONTAINER_STORAGE"
 check_disk_space() {
     local storage="$1"
     local required_space="$2"
-    local storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
-    if [ -z "$storage_path" ]; then
-        echo "Error: Could not determine path for storage '$storage'."
-        log "Error: Failed to get path for storage $storage"
+    local storage_info=$(pvesm get "$storage" --human-readable false 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        echo "Error: Could not retrieve storage info for '$storage'."
+        log "Error: Failed to get storage info for $storage"
+        exit 2
+    fi
+    local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+    if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
+        echo "Error: Invalid or inaccessible storage path for '$storage'."
+        log "Error: Invalid storage path for $storage: $storage_path"
         exit 2
     fi
     local available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
+    if [ -z "$available_space" ]; then
+        echo "Error: Could not determine available space on $storage_path."
+        log "Error: Failed to get available space on $storage_path"
+        exit 2
+    fi
     if [ "$available_space" -lt "$required_space" ]; then
         echo "Error: Insufficient disk space on $storage_path."
         echo "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
@@ -167,6 +178,40 @@ REQUIRED_SPACE=$((REQUIRED_SPACE + (REQUIRED_SPACE / 5)))
 echo "Checking disk space for backup on $CONTAINER_STORAGE..."
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
 
+# Check if container storage supports backups
+if ! pvesm status | grep "^$CONTAINER_STORAGE" | grep -q "backup"; then
+    echo "Warning: Storage '$CONTAINER_STORAGE' does not support backups."
+    log "Warning: Storage $CONTAINER_STORAGE does not support backups"
+    # Get list of storages that support backups
+    BACKUP_STORAGES=$(pvesm status | grep "backup" | awk '{print $1}')
+    if [ -z "$BACKUP_STORAGES" ]; then
+        echo "Error: No storage available for backups. Please configure a storage with 'backup' content type."
+        log "Error: No backup storage available"
+        exit 2
+    fi
+    # Build whiptail menu for backup storage selection
+    BACKUP_MENU_OPTIONS=()
+    while read -r storage; do
+        BACKUP_MENU_OPTIONS+=("$storage" "Storage: $storage")
+    done <<< "$BACKUP_STORAGES"
+    BACKUP_STORAGE=$(whiptail --title "Select Backup Storage" --menu "Choose a storage for backups:" 15 60 6 \
+        "${BACKUP_MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
+    if [ $? -ne 0 ]; then
+        echo "Backup storage selection cancelled."
+        log "Error: Backup storage selection cancelled"
+        exit 1
+    fi
+    echo "Selected backup storage: $BACKUP_STORAGE"
+    log "Selected backup storage: $BACKUP_STORAGE"
+    # Check disk space for backup storage
+    echo "Checking disk space for backup on $BACKUP_STORAGE..."
+    check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
+else
+    BACKUP_STORAGE="$CONTAINER_STORAGE"
+    echo "Using container storage for backups: $BACKUP_STORAGE"
+    log "Using container storage for backups: $BACKUP_STORAGE"
+fi
+
 # Check if the container is unprivileged
 UNPRIVILEGED=""
 if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
@@ -193,7 +238,7 @@ fi
 
 # Check for existing backup or create a new one
 echo "Searching for existing backup for CT $CURRENT_CT_ID..."
-BACKUP_FILE=$(pvesm list "$CONTAINER_STORAGE" | grep "vzdump-lxc-$CURRENT_CT_ID-" | awk '{print $1}' | head -n 1)
+BACKUP_FILE=$(pvesm list "$BACKUP_STORAGE" | grep "vzdump-lxc-$CURRENT_CT_ID-" | awk '{print $1}' | head -n 1)
 if [ -n "$BACKUP_FILE" ]; then
     BACKUP_PATH=$(pvesm path "$BACKUP_FILE")
     if [ -f "$BACKUP_PATH" ]; then
@@ -204,16 +249,16 @@ if [ -n "$BACKUP_FILE" ]; then
     fi
 fi
 if [ -z "$BACKUP_FILE" ]; then
-    echo "No existing backup found. Creating new backup on $CONTAINER_STORAGE..."
-    VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$CONTAINER_STORAGE" --mode snapshot 2>&1)
+    echo "No existing backup found. Creating new backup on $BACKUP_STORAGE..."
+    VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
     VZDUMP_STATUS=$?
     if [ $VZDUMP_STATUS -ne 0 ]; then
         echo "Error: Backup failed for container $CURRENT_CT_ID."
         echo "$VZDUMP_OUTPUT"
         if echo "$VZDUMP_OUTPUT" | grep -q "Permission denied"; then
-            echo "Hint: Check storage permissions for $CONTAINER_STORAGE."
+            echo "Hint: Check storage permissions for $BACKUP_STORAGE."
         elif echo "$VZDUMP_OUTPUT" | grep -q "No space left"; then
-            echo "Hint: Storage $CONTAINER_STORAGE may be full."
+            echo "Hint: Storage $BACKUP_STORAGE may be full."
         fi
         log "Error: Backup failed for CT $CURRENT_CT_ID: $VZDUMP_OUTPUT"
         exit 2
