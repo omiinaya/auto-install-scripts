@@ -302,8 +302,14 @@ check_disk_space() {
 
     debug_log "Comparing available_space=$available_space with required_space=$required_space"
     if [ "$available_space" -lt "$required_space" ]; then
+        local other_storages=$(pvesm status | grep -v "^$storage" | grep "active" | awk '{print $1 " (" $2 ", " $6/1024 " MB available)"}')
         log "Error: Insufficient disk space on storage '$storage'."
         log "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
+        log "Hint: Free up space on '$storage' (e.g., remove old backups or snapshots), or use a different backup storage."
+        if [ -n "$other_storages" ]; then
+            log "Other available storages: $other_storages"
+            log "You can remove the current backup storage with 'pvesm remove $storage' and rerun the script to try another."
+        fi
         exit 2
     fi
     log "Sufficient disk space on storage '$storage': $((available_space / 1024 / 1024)) MB available"
@@ -315,12 +321,26 @@ configure_backup_storage() {
     local backup_storages=$(pvesm status | grep "backup" | awk '{print $1}')
     debug_log "Found backup storages: $backup_storages"
     if [ -n "$backup_storages" ]; then
-        BACKUP_STORAGE=$(echo "$backup_storages" | head -n 1)
-        debug_log "Using existing backup storage: $BACKUP_STORAGE"
-        return 0
+        # Try each backup storage until one has sufficient space
+        for storage in $backup_storages; do
+            debug_log "Trying backup storage: $storage"
+            BACKUP_STORAGE="$storage"
+            # Check disk space for this storage
+            local space_check=$(check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" 2>&1)
+            local space_check_exit=$?
+            if [ $space_check_exit -eq 0 ]; then
+                debug_log "Backup storage $BACKUP_STORAGE has sufficient space"
+                return 0
+            else
+                debug_log "Backup storage $BACKUP_STORAGE failed space check: $space_check"
+                # Remove this storage from consideration and try the next one
+                pvesm set "$BACKUP_STORAGE" --content images 2>/dev/null
+                BACKUP_STORAGE=""
+            fi
+        done
     fi
 
-    debug_log "No backup storage found, attempting to configure one"
+    debug_log "No suitable backup storage found, attempting to configure one"
     # Try NFS storages
     local nfs_storages=$(pvesm status | grep "nfs" | awk '{print $1}')
     debug_log "Available NFS storages: $nfs_storages"
