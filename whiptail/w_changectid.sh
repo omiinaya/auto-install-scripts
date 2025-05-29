@@ -124,52 +124,69 @@ check_disk_space() {
     local storage="$1"
     local required_space="$2"
     local storage_type=$(pvesm status | grep "^$storage" | awk '{print $2}')
-    local storage_path=""
     local available_space=""
 
     if [ "$storage_type" = "zfs" ]; then
-        # For ZFS storage, get the dataset and its mountpoint
-        local zfs_dataset=$(pvesm get "$storage" --human-readable false 2>/dev/null | grep '^pool' | awk '{print $2}')
-        if [ -z "$zfs_dataset" ]; then
-            echo "Error: Could not retrieve ZFS dataset for '$storage'."
-            log "Error: Failed to get ZFS dataset for $storage"
+        # Try to find the container-specific ZFS subvolume
+        local zfs_subvol=$(pvesm list "$storage" 2>/dev/null | grep "lxc/$CURRENT_CT_ID/" | awk '{print $1}' | cut -d: -f2)
+        if [ -n "$zfs_subvol" ]; then
+            log "Found ZFS subvolume for CT $CURRENT_CT_ID: $zfs_subvol"
+            available_space=$(zfs get -p -H -o value available "$zfs_subvol" 2>/dev/null)
+            if [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
+                log "ZFS subvolume available space: $available_space bytes"
+            else
+                log "Warning: Could not get available space for subvolume $zfs_subvol"
+                available_space=""
+            fi
+        fi
+        if [ -z "$available_space" ]; then
+            # Fall back to the ZFS pool
+            local zfs_pool=$(zfs list -H -o name 2>/dev/null | head -n 1)
+            if [ -n "$zfs_pool" ]; then
+                log "Falling back to ZFS pool: $zfs_pool"
+                available_space=$(zfs get -p -H -o value available "$zfs_pool" 2>/dev/null)
+                if [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
+                    log "ZFS pool available space: $available_space bytes"
+                else
+                    log "Error: Could not get available space for pool $zfs_pool"
+                    available_space=""
+                fi
+            fi
+        fi
+        if [ -z "$available_space" ]; then
+            echo "Error: Could not determine available space for ZFS storage '$storage'."
+            echo "Hint: Check ZFS configuration with 'zfs list' or 'pvesm get $storage'. Ensure the ZFS pool or subvolume is accessible."
+            log "Error: Failed to get available space for ZFS storage $storage"
             exit 2
         fi
-        # Get the mountpoint (or assume dataset path if not mounted)
-        storage_path=$(zfs list -o mountpoint "$zfs_dataset" 2>/dev/null | tail -n 1)
-        if [ -z "$storage_path" ] || [ "$storage_path" = "none" ] || [ ! -d "$storage_path" ]; then
-            # Fall back to checking available space on the ZFS pool
-            available_space=$(zfs get -p -H -o value available "$zfs_dataset" 2>/dev/null)
-            if [ -z "$available_space" ]; then
-                echo "Error: Could not determine available space for ZFS storage '$storage'."
-                log "Error: Failed to get available space for ZFS storage $storage"
-                exit 2
-            fi
-        else
-            available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
-        fi
     else
-        # For non-ZFS storage (e.g., dir, lvm-thin), use pvesm get
+        # Non-ZFS storage (e.g., dir, nfs)
         local storage_info=$(pvesm get "$storage" --human-readable false 2>/dev/null)
         if [ $? -ne 0 ]; then
             echo "Error: Could not retrieve storage info for '$storage'."
             log "Error: Failed to get storage info for $storage"
             exit 2
         fi
-        storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+        local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+        if [ "$storage_type" = "nfs" ]; then
+            # For NFS, use the mountpoint directly
+            storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
+            log "NFS storage detected, using mountpoint: $storage_path"
+        fi
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
             echo "Error: Invalid or inaccessible storage path for '$storage'."
             log "Error: Invalid storage path for $storage: $storage_path"
             exit 2
         fi
         available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
+        if [ -z "$available_space" ] || ! [[ "$available_space" =~ ^[0-9]+$ ]]; then
+            echo "Error: Could not determine available space for storage '$storage'."
+            log "Error: Failed to get available space for $storage"
+            exit 2
+        fi
+        log "Non-ZFS storage path: $storage_path, available space: $available_space bytes"
     fi
 
-    if [ -z "$available_space" ]; then
-        echo "Error: Could not determine available space for storage '$storage'."
-        log "Error: Failed to get available space for $storage"
-        exit 2
-    fi
     if [ "$available_space" -lt "$required_space" ]; then
         echo "Error: Insufficient disk space on storage '$storage'."
         echo "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
