@@ -2,7 +2,7 @@
 # Line 1
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
 # Automatically detects the container's storage from its configuration
-# Uses existing backup if available
+# Skips stop if container is already stopped, uses exact backup filename
 # Usage: ./change_ct_id.sh <current_ct_id> <new_ct_id>
 
 # Line 7: Check if exactly 2 arguments are provided
@@ -24,7 +24,7 @@ fi
 # Line 21: Define backup storage and existing backup file
 BACKUP_STORAGE="local"
 BACKUP_DIR="/var/lib/vz/dump"
-EXISTING_BACKUP="$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-2025_05_28-18_00_25.tar.zst"
+EXISTING_BACKUP="$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-2025_05_28-21_49_00.tar.zst"
 
 # Line 26: Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
@@ -84,63 +84,76 @@ if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
     echo "Detected unprivileged container. Will use --unprivileged flag for restore."
 fi
 
-# Line 74: Stop the container
-echo "Stopping container $CURRENT_CT_ID..."
-pct stop "$CURRENT_CT_ID" || {
-    echo "Error: Failed to stop container $CURRENT_CT_ID."
-    exit 1
-}
+# Line 74: Stop the container if running
+echo "Checking container $CURRENT_CT_ID status..."
+STATUS=$(pct status "$CURRENT_CT_ID" 2>/dev/null)
+if echo "$STATUS" | grep -q "status: running"; then
+    echo "Stopping container $CURRENT_CT_ID..."
+    pct stop "$CURRENT_CT_ID" || {
+        echo "Error: Failed to stop container $CURRENT_CT_ID."
+        exit 1
+    }
+else
+    echo "Container $CURRENT_CT_ID is already stopped (status: $STATUS)."
+fi
 
-# Line 80: Check for existing backup or create a new one
+# Line 85: Check for existing backup or create a new one
 BACKUP_FILE="$EXISTING_BACKUP"
 echo "Checking for existing backup: $BACKUP_FILE..."
 if [ ! -f "$BACKUP_FILE" ]; then
-    echo "Existing backup not found. Creating new backup of container $CURRENT_CT_ID..."
-    TIMESTAMP=$(date +%Y_%m_%d-%H_%M_%S)
-    BACKUP_FILE="$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-$TIMESTAMP.tar.zst"
-    vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot || {
+    echo "Existing backup not found. Checking permissions and path..."
+    ls -l "$BACKUP_DIR" 2>/dev/null || echo "Error: Cannot access $BACKUP_DIR"
+    echo "Creating new backup of container $CURRENT_CT_ID..."
+    # Run vzdump and capture its output to get the exact filename
+    VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
+    VZDUMP_STATUS=$?
+    if [ $VZDUMP_STATUS -ne 0 ]; then
         echo "Error: Backup failed for container $CURRENT_CT_ID."
-        exit 1
-    }
-    # Verify the newly created backup
-    if [ ! -f "$BACKUP_FILE" ]; then
-        echo "Error: Newly created backup file $BACKUP_FILE not found."
+        echo "$VZDUMP_OUTPUT"
         exit 1
     fi
+    # Extract the backup filename from vzdump output
+    BACKUP_FILE=$(echo "$VZDUMP_OUTPUT" | grep -oP "creating vzdump archive '\K[^']+" | head -n 1)
+    if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
+        echo "Error: No backup file found after vzdump. Expected in $BACKUP_DIR."
+        ls -l "$BACKUP_DIR" 2>/dev/null
+        exit 1
+    fi
+    echo "New backup created: $BACKUP_FILE"
 fi
 
-# Line 94: Delete the original container
+# Line 104: Delete the original container
 echo "Deleting original container $CURRENT_CT_ID..."
 pct destroy "$CURRENT_CT_ID" || {
     echo "Error: Failed to delete container $CURRENT_CT_ID."
     exit 1
 }
 
-# Line 100: Restore the container with the new CT ID
+# Line 110: Restore the container with the new CT ID
 echo "Restoring container as $NEW_CT_ID..."
 pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVILEGED || {
     echo "Error: Failed to restore container as $NEW_CT_ID."
     exit 1
 }
 
-# Line 106: Start the new container
+# Line 116: Start the new container
 echo "Starting container $NEW_CT_ID..."
 pct start "$NEW_CT_ID" || {
     echo "Error: Failed to start container $NEW_CT_ID."
     exit 1
 }
 
-# Line 112: Verify the container is running
-if pct status "$NEW_CT_ID" | grep -q "running"; then
+# Line 122: Verify the container is running
+if pct status "$NEW_CT_ID" | grep -q "status: running"; then
     echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
 else
     echo "Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'."
     exit 1
 fi
 
-# Line 119: Optional cleanup (commented out)
+# Line 129: Optional cleanup (commented out)
 # echo "Cleaning up backup file $BACKUP_FILE..."
 # rm -f "$BACKUP_FILE"
 
-# Line 122: Exit successfully
+# Line 132: Exit successfully
 exit 0
