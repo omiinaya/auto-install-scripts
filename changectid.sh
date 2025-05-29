@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
 # Features an interactive whiptail menu for container selection, styled like community-scripts/ProxmoxVE
-# Dynamically finds or creates backups, validates new CT ID
+# Falls back to text menu if whiptail fails, validates new CT ID
 # Usage: ./change_ct_id.sh
 
 # Colors and emojis for community-scripts/ProxmoxVE style
@@ -18,6 +18,11 @@ INFO="${CYAN}ℹ️${CL}"
 GEAR="${YELLOW}⚙️${CL}"
 ID_EMOJI="${CYAN}🆔${CL}"
 
+# Debugging function
+debug() {
+    echo -e "${INFO} ${CYAN}DEBUG: $1${CL}" >&2
+}
+
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
     echo -e "${CROSS} ${RED}This script must be run as root.${CL}"
@@ -28,15 +33,6 @@ fi
 if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1; then
     echo -e "${CROSS} ${RED}Proxmox tools (pct or vzdump) not found. Is this a Proxmox system?${CL}"
     exit 1
-fi
-
-# Check if whiptail is installed
-if ! command -v whiptail >/dev/null 2>&1; then
-    echo -e "${INFO} ${CYAN}Installing whiptail...${CL}"
-    apt-get update && apt-get install -y whiptail || {
-        echo -e "${CROSS} ${RED}Failed to install whiptail.${CL}"
-        exit 1
-    }
 fi
 
 # Define backup storage
@@ -50,31 +46,78 @@ if ! pvesm status | grep -q "^$BACKUP_STORAGE"; then
 fi
 
 # Get list of containers
+debug "Fetching container list..."
 CONTAINERS=()
-while read -r CT_ID; do
+CT_IDS=$(pct list 2>/dev/null | awk 'NR>1 {print $1}')
+if [ -z "$CT_IDS" ]; then
+    debug "No containers found via pct list."
+    echo -e "${CROSS} ${RED}No containers found. Check Proxmox configuration.${CL}"
+    exit 1
+fi
+
+for CT_ID in $CT_IDS; do
     if [ -f "/etc/pve/lxc/$CT_ID.conf" ]; then
         CT_NAME=$(grep -E "^hostname:" "/etc/pve/lxc/$CT_ID.conf" | awk '{print $2}' | head -n 1)
         CT_NAME=${CT_NAME:-"Unnamed"}
         CT_STATUS=$(pct status "$CT_ID" 2>/dev/null | grep -o "status:.*" | awk '{print $2}' || echo "Unknown")
         CONTAINERS+=("$CT_ID" "$CT_NAME (Status: $CT_STATUS)")
+        debug "Found container: ID=$CT_ID, Name=$CT_NAME, Status=$CT_STATUS"
+    else
+        debug "Config file missing for CT $CT_ID"
     fi
-done < <(pct list | awk 'NR>1 {print $1}')
+done
 
 if [ ${#CONTAINERS[@]} -eq 0 ]; then
-    echo -e "${CROSS} ${RED}No containers found.${CL}"
+    debug "No valid containers with config files found."
+    echo -e "${CROSS} ${RED}No valid containers found. Check /etc/pve/lxc/*.conf.${CL}"
     exit 1
 fi
 
-# Select container using whiptail (styled like community-scripts/ProxmoxVE)
-CURRENT_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
-    --title "${GEAR} Select Container to Change ID" \
-    --radiolist "Choose a container:" 15 60 8 \
-    "${CONTAINERS[@]}" 3>&1 1>&2 2>&3)
-
-if [ $? -ne 0 ] || [ -z "$CURRENT_CT_ID" ]; then
-    echo -e "${CROSS} ${YELLOW}Container selection canceled.${CL}"
-    exit 0
+# Check if whiptail is installed and functional
+WHIPTAIL_AVAILABLE=0
+if command -v whiptail >/dev/null 2>&1; then
+    # Test whiptail with a simple dialog
+    whiptail --msgbox "Testing whiptail..." 8 40 2>/dev/null && WHIPTAIL_AVAILABLE=1
 fi
+
+if [ $WHIPTAIL_AVAILABLE -eq 0 ]; then
+    debug "Whiptail not available or failed. Installing or using text fallback..."
+    if command -v apt-get >/dev/null 2>&1; then
+        echo -e "${INFO} ${CYAN}Installing whiptail...${CL}"
+        apt-get update && apt-get install -y whiptail && WHIPTAIL_AVAILABLE=1 || {
+            echo -e "${CROSS} ${YELLOW}Failed to install whiptail. Using text-based menu.${CL}"
+        }
+    fi
+fi
+
+# Select container
+if [ $WHIPTAIL_AVAILABLE -eq 1 ]; then
+    debug "Displaying whiptail menu with ${#CONTAINERS[@]} options"
+    CURRENT_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
+        --title "${GEAR} Select Container to Change ID" \
+        --radiolist "Choose a container:" 15 60 8 \
+        "${CONTAINERS[@]}" 3>&1 1>&2 2>&3)
+    if [ $? -ne 0 ] || [ -z "$CURRENT_CT_ID" ]; then
+        debug "Whiptail container selection canceled or failed"
+        echo -e "${CROSS} ${YELLOW}Container selection canceled.${CL}"
+        exit 0
+    fi
+else
+    debug "Using text-based container selection"
+    echo -e "${INFO} ${CYAN}Available containers:${CL}"
+    for ((i=0; i<${#CONTAINERS[@]}; i+=2)); do
+        echo "[$((i/2 + 1))] ${CONTAINERS[i]}: ${CONTAINERS[i+1]}"
+    done
+    while true; do
+        read -p "Enter the number of the container to select (1-$(( ${#CONTAINERS[@]}/2 ))): " CHOICE
+        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le $(( ${#CONTAINERS[@]}/2 )) ]; then
+            CURRENT_CT_ID=${CONTAINERS[$(( (CHOICE-1)*2 ))]}
+            break
+        fi
+        echo -e "${CROSS} ${RED}Invalid choice. Enter a number between 1 and $(( ${#CONTAINERS[@]}/2 )).${CL}"
+    done
+fi
+echo -e "${CHECK} ${GREEN}Selected container: $CURRENT_CT_ID${CL}"
 
 # Get container storage from configuration
 CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
@@ -103,29 +146,48 @@ if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
     echo -e "${CHECK} ${GREEN}Detected unprivileged container. Will use --unprivileged flag for restore.${CL}"
 fi
 
-# Prompt for new CT ID using whiptail
-while true; do
-    NEW_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
-        --title "${ID_EMOJI} Enter New Container ID" \
-        --inputbox "Enter the new CT ID (positive integer, not in use):" 10 60 3>&1 1>&2 2>&3)
-    if [ $? -ne 0 ]; then
-        echo -e "${CROSS} ${YELLOW}New CT ID input canceled.${CL}"
-        exit 0
-    fi
-    if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
-        whiptail --backtitle "Proxmox VE Helper Scripts" \
-            --title "${CROSS} Invalid Input" \
-            --msgbox "CT ID must be a positive integer." 8 60
-        continue
-    fi
-    if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
-        whiptail --backtitle "Proxmox VE Helper Scripts" \
-            --title "${CROSS} ID In Use" \
-            --msgbox "CT ID $NEW_CT_ID is already in use. Choose another." 8 60
-        continue
-    fi
-    break
-done
+# Prompt for new CT ID
+if [ $WHIPTAIL_AVAILABLE -eq 1 ]; then
+    debug "Displaying whiptail input for new CT ID"
+    while true; do
+        NEW_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" \
+            --title "${ID_EMOJI} Enter New Container ID" \
+            --inputbox "Enter the new CT ID (positive integer, not in use):" 10 60 3>&1 1>&2 2>&3)
+        if [ $? -ne 0 ]; then
+            debug "Whiptail new CT ID input canceled"
+            echo -e "${CROSS} ${YELLOW}New CT ID input canceled.${CL}"
+            exit 0
+        fi
+        if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
+            whiptail --backtitle "Proxmox VE Helper Scripts" \
+                --title "${CROSS} Invalid Input" \
+                --msgbox "CT ID must be a positive integer." 8 60
+            continue
+        fi
+        if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
+            whiptail --backtitle "Proxmox VE Helper Scripts" \
+                --title "${CROSS} ID In Use" \
+                --msgbox "CT ID $NEW_CT_ID is already in use. Choose another." 8 60
+            continue
+        fi
+        break
+    done
+else
+    debug "Using text-based input for new CT ID"
+    while true; do
+        read -p "Enter the new CT ID (positive integer, not in use): " NEW_CT_ID
+        if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
+            echo -e "${CROSS} ${RED}CT ID must be a positive integer.${CL}"
+            continue
+        fi
+        if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
+            echo -e "${CROSS} ${RED}CT ID $NEW_CT_ID is already in use. Choose another.${CL}"
+            continue
+        fi
+        break
+    done
+fi
+echo -e "${CHECK} ${GREEN}New CT ID: $NEW_CT_ID${CL}"
 
 # Stop the container if running
 echo -e "${INFO} ${CYAN}Checking container $CURRENT_CT_ID status...${CL}"
@@ -182,7 +244,7 @@ pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVIL
 # Start the new container
 echo -e "${INFO} ${CYAN}Starting container $NEW_CT_ID...${CL}"
 pct start "$NEW_CT_ID" || {
-    echo -e "${CROSS} ${RED}Failed to start container $NEW_CT_ID.${CL}"
+    echo -e "${INFO} ${CYAN}Failed to start container $NEW_CT_ID.${CL}"
     exit 1
 }
 
