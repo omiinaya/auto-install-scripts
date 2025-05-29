@@ -1,284 +1,159 @@
 #!/bin/bash
+# Line 1
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
-# Features an interactive whiptail menu, falls back to text if whiptail fails
-# Includes debugging to catch hangs, styled like community-scripts/ProxmoxVE
-# Usage: ./change_ct_id.sh
+# Automatically detects the container's storage from its configuration
+# Skips stop if container is already stopped, dynamically finds or creates backup
+# Usage: ./change_ct_id.sh <current_ct_id> <new_ct_id>
 
-# Force unbuffered output
-exec stdbuf -oL -eL bash "$0" "$@"
-
-# Colors and emojis
-BLUE='\e[34m'
-YELLOW='\e[33m'
-RED='\e[31m'
-GREEN='\e[32m'
-CYAN='\e[36m'
-WHITE='\e[97m'
-CL='\e[0m'
-CHECK="${GREEN}✅${CL}"
-CROSS="${RED}❌${CL}"
-INFO="${CYAN}ℹ️${CL}"
-GEAR="${YELLOW}⚙️${CL}"
-ID_EMOJI="${CYAN}🆔${CL}"
-
-# Debugging function
-debug() {
-    echo -e "${INFO} ${CYAN}DEBUG [$(date '+%H:%M:%S')]: $1${CL}" >&2
-}
-
-debug "Script started"
-
-# Check if running as root
-debug "Checking root privileges"
-if [ "$(id -u)" -ne 0 ]; then
-    echo -e "${CROSS} ${RED}This script must be run as root.${CL}"
+# Line 7: Check if exactly 2 arguments are provided
+if [ "$#" -ne 2 ]; then
+    echo "Usage: $0 <current_ct_id> <new_ct_id>"
     exit 1
 fi
 
-# Check terminal
-debug "Checking terminal: TERM=$TERM, LINES=$LINES, COLUMNS=$COLUMNS"
-if [ -z "$TERM" ] || [ "$TERM" = "dumb" ] || [ -z "$LINES" ] || [ -z "$COLUMNS" ]; then
-    echo -e "${CROSS} ${RED}Invalid terminal environment. Set TERM=xterm or use a larger terminal.${CL}"
+# Line 12: Define variables
+CURRENT_CT_ID="$1"
+NEW_CT_ID="$2"
+
+# Line 16: Validate that both arguments are positive integers
+if ! [[ "$CURRENT_CT_ID" =~ ^[0-9]+$ ]] || ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
+    echo "Error: Both CT IDs must be positive integers."
     exit 1
 fi
 
-# Check Proxmox tools
-debug "Checking Proxmox tools"
-if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1; then
-    echo -e "${CROSS} ${RED}Proxmox tools (pct or vzdump) not found.${CL}"
-    exit 1
-fi
-
-# Define backup storage
+# Line 21: Define backup storage
 BACKUP_STORAGE="local"
 BACKUP_DIR="/var/lib/vz/dump"
-debug "Backup storage: $BACKUP_STORAGE, dir: $BACKUP_DIR"
 
-# Check backup storage
-debug "Checking backup storage"
+# Line 24: Check if running as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Error: This script must be run as root."
+    exit 1
+fi
+
+# Line 29: Check if Proxmox tools are available
+if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1; then
+    echo "Error: Proxmox tools (pct or vzdump) not found. Is this a Proxmox system?"
+    exit 1
+fi
+
+# Line 34: Check if the current CT ID exists
+if ! pct status "$CURRENT_CT_ID" >/dev/null 2>&1; then
+    echo "Error: Container with ID $CURRENT_CT_ID does not exist."
+    exit 1
+fi
+
+# Line 39: Check if the new CT ID is already in use
+if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
+    echo "Error: Container with ID $NEW_CT_ID already exists."
+    exit 1
+fi
+
+# Line 44: Check if backup storage exists
 if ! pvesm status | grep -q "^$BACKUP_STORAGE"; then
-    echo -e "${CROSS} ${RED}Backup storage '$BACKUP_STORAGE' not found.${CL}"
+    echo "Error: Backup storage '$BACKUP_STORAGE' not found."
     exit 1
 fi
 
-# Get list of containers
-debug "Fetching container list"
-CONTAINERS=()
-CT_IDS=$(pct list 2>/dev/null | awk 'NR>1 {print $1}' || true)
-if [ -z "$CT_IDS" ]; then
-    debug "No containers found via pct list"
-    echo -e "${CROSS} ${RED}No containers found. Check Proxmox configuration.${CL}"
-    exit 1
-fi
-
-for CT_ID in $CT_IDS; do
-    if [ -f "/etc/pve/lxc/$CT_ID.conf" ]; then
-        CT_NAME=$(grep -E "^hostname:" "/etc/pve/lxc/$CT_ID.conf" | awk '{print $2}' | head -n 1)
-        CT_NAME=${CT_NAME:-"Unnamed"}
-        CT_STATUS=$(pct status "$CT_ID" 2>/dev/null | grep -o "status:.*" | awk '{print $2}' || echo "Unknown")
-        CONTAINERS+=("$CT_ID" "$CT_NAME (Status: $CT_STATUS)")
-        debug "Found container: ID=$CT_ID, Name=$CT_NAME, Status=$CT_STATUS"
-    else
-        debug "Config file missing for CT $CT_ID"
-    fi
-done
-
-if [ ${#CONTAINERS[@]} -eq 0 ]; then
-    debug "No valid containers with config files"
-    echo -e "${CROSS} ${RED}No valid containers found. Check /etc/pve/lxc/*.conf.${CL}"
-    exit 1
-fi
-
-# Check whiptail
-WHIPTAIL_AVAILABLE=0
-debug "Checking whiptail availability"
-if command -v whiptail >/dev/null 2>&1; then
-    if whiptail --msgbox "Testing whiptail" 8 40 2>/dev/null; then
-        WHIPTAIL_AVAILABLE=1
-        debug "Whiptail test passed"
-    else
-        debug "Whiptail test failed"
-    fi
-fi
-
-if [ $WHIPTAIL_AVAILABLE -eq 0 ]; then
-    debug "Attempting to install whiptail"
-    if command -v apt-get >/dev/null 2>&1; then
-        apt-get update && apt-get install -y whiptail && {
-            whiptail --msgbox "Testing whiptail" 8 40 2>/dev/null && WHIPTAIL_AVAILABLE=1
-            debug "Whiptail installed: available=$WHIPTAIL_AVAILABLE"
-        } || {
-            debug "Whiptail installation failed"
-            echo -e "${CROSS} ${YELLOW}Failed to install whiptail. Using text-based menu.${CL}"
-        }
-    fi
-fi
-
-# Select container
-debug "Preparing container selection with ${#CONTAINERS[@]} options"
-if [ $WHIPTAIL_AVAILABLE -eq 1 ]; then
-    debug "Invoking whiptail menu for container selection"
-    CURRENT_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "${GEAR} Select Container to Change ID" --radiolist "Choose a container:" 15 60 8 "${CONTAINERS[@]}" 3>&1 1>&2 2>&3)
-    if [ $? -ne 0 ] || [ -z "$CURRENT_CT_ID" ]; then
-        debug "Whiptail container selection canceled or failed"
-        echo -e "${CROSS} ${YELLOW}Container selection canceled.${CL}"
-        exit 0
-    fi
-else
-    debug "Using text-based menu for container selection"
-    echo -e "${INFO} ${CYAN}Available containers:${CL}"
-    for ((i=0; i<${#CONTAINERS[@]}; i+=2)); do
-        echo "[$((i/2 + 1))] ${CONTAINERS[i]}: ${CONTAINERS[i+1]}"
-    done
-    while true; do
-        read -p "Enter the number of the container (1-$(( ${#CONTAINERS[@]}/2 ))): " CHOICE
-        if [[ "$CHOICE" =~ ^[0-9]+$ ]] && [ "$CHOICE" -ge 1 ] && [ "$CHOICE" -le $(( ${#CONTAINERS[@]}/2 )) ]; then
-            CURRENT_CT_ID=${CONTAINERS[$(( (CHOICE-1)*2 ))]}
-            break
-        fi
-        echo -e "${CROSS} ${RED}Invalid choice. Enter a number between 1 and $(( ${#CONTAINERS[@]}/2 )).${CL}"
-    done
-fi
-echo -e "${CHECK} ${GREEN}Selected container: $CURRENT_CT_ID${CL}"
-
-# Get container storage
-debug "Reading config for CT $CURRENT_CT_ID"
+# Line 49: Detect container storage from configuration
 CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo -e "${CROSS} ${RED}Configuration file $CONFIG_FILE not found.${CL}"
+    echo "Error: Configuration file $CONFIG_FILE not found."
     exit 1
 fi
 
+# Line 55: Extract storage from rootfs line
 CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
 if [ -z "$CONTAINER_STORAGE" ]; then
-    echo -e "${CROSS} ${RED}Could not detect container storage from $CONFIG_FILE.${CL}"
+    echo "Error: Could not detect container storage from $CONFIG_FILE."
     exit 1
 fi
 
-# Verify container storage
-debug "Verifying storage: $CONTAINER_STORAGE"
+# Line 60: Verify container storage exists
 if ! pvesm status | grep -q "^$CONTAINER_STORAGE"; then
-    echo -e "${CROSS} ${RED}Container storage '$CONTAINER_STORAGE' not found.${CL}"
+    echo "Error: Container storage '$CONTAINER_STORAGE' not found."
     exit 1
 fi
-echo -e "${CHECK} ${GREEN}Detected container storage: $CONTAINER_STORAGE${CL}"
+echo "Detected container storage: $CONTAINER_STORAGE"
 
-# Check if unprivileged
+# Line 66: Check if the container is unprivileged
 UNPRIVILEGED=""
 if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
     UNPRIVILEGED="--unprivileged"
-    echo -e "${CHECK} ${GREEN}Detected unprivileged container.${CL}"
+    echo "Detected unprivileged container. Will use --unprivileged flag for restore."
 fi
 
-# Prompt for new CT ID
-debug "Prompting for new CT ID"
-if [ $WHIPTAIL_AVAILABLE -eq 1 ]; then
-    debug "Invoking whiptail for new CT ID"
-    while true; do
-        NEW_CT_ID=$(whiptail --backtitle "Proxmox VE Helper Scripts" --title "${ID_EMOJI} Enter New Container ID" --inputbox "Enter the new CT ID (positive integer, not in use): 10 60 3>&1 1>&2 2>&3)
-        EXIT_STATUS=$?
-        debug "Whiptail new CT ID exit status: $EXIT_STATUS, output: $NEW_CT_ID"
-        if [ $EXIT_STATUS -ne 0 ]; then
-            debug "Whiptail new CT ID input canceled"
-            echo -e "${CROSS} ${YELLOW}New CT ID input canceled.${CL}"
-            exit 0
-        fi
-        if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
-            whiptail --backtitle "Proxmox VE Helper Scripts" --title "${CROSS} Invalid Input" --msgbox "CT ID must be a positive integer." 8 60
-            continue
-        fi
-        if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
-            whiptail --backtitle "Proxmox VE Helper Scripts" --title "${CROSS} ID In Use" --msgbox "CT ID $NEW_CT_ID is already in use. Choose another." 8 60
-            continue
-        fi
-        break
-    done
-else
-    debug "Using text-based input for new CT ID"
-    while true; do
-        read -p "Enter the new CT ID (positive integer, not in use): " NEW_CT_ID
-        if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
-            echo -e "${CROSS} ${RED}CT ID must be a positive integer.${CL}"
-            continue
-        fi
-        if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
-            echo -e "${CROSS} ${RED}CT ID $NEW_CT_ID is already in use. Choose another.${CL}"
-            continue
-        fi
-        break
-    done
-fi
-echo -e "${CHECK} ${GREEN}New CT ID: $NEW_CT_ID${CL}"
-
-# Stop the container if running
-debug "Checking container $CURRENT_CT_ID status"
+# Line 72: Stop the container if running
+echo "Checking container $CURRENT_CT_ID status..."
 STATUS=$(pct status "$CURRENT_CT_ID" 2>/dev/null)
 if echo "$STATUS" | grep -q "status: running"; then
-    echo -e "${INFO} ${CYAN}Stopping container $CURRENT_CT_ID...${CL}"
+    echo "Stopping container $CURRENT_CT_ID..."
     pct stop "$CURRENT_CT_ID" || {
-        echo -e "${CROSS} ${RED}Failed to stop container $CURRENT_CT_ID.${CL}"
+        echo "Error: Failed to stop container $CURRENT_CT_ID."
         exit 1
     }
 else
-    echo -e "${CHECK} ${GREEN}Container $CURRENT_CT_ID is already stopped (status: $STATUS).${CL}"
+    echo "Container $CURRENT_CT_ID is already stopped (status: $STATUS)."
 fi
 
-# Check for existing backup or create a new one
-debug "Searching for backup for CT $CURRENT_CT_ID"
+# Line 83: Check for existing backup or create a new one
+echo "Searching for existing backup for CT $CURRENT_CT_ID..."
 BACKUP_FILE=$(ls -t "$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-"*.tar.zst 2>/dev/null | head -n 1)
 if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
-    echo -e "${CHECK} ${GREEN}Found existing backup: $BACKUP_FILE${CL}"
+    echo "Found existing backup: $BACKUP_FILE"
 else
-    echo -e "${INFO} ${CYAN}No existing backup found. Checking permissions and path...${CL}"
-    ls -l "$BACKUP_DIR" 2>/dev/null || echo -e "${CROSS} ${RED}Cannot access $BACKUP_DIR${CL}"
-    echo -e "${INFO} ${CYAN}Creating new backup of container $CURRENT_CT_ID...${CL}"
+    echo "No existing backup found. Checking permissions and path..."
+    ls -l "$BACKUP_DIR" 2>/dev/null || echo "Error: Cannot access $BACKUP_DIR"
+    echo "Creating new backup of container $CURRENT_CT_ID..."
     VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
     VZDUMP_STATUS=$?
     if [ $VZDUMP_STATUS -ne 0 ]; then
-        echo -e "${CROSS} ${RED}Backup failed for container $CURRENT_CT_ID.${CL}"
+        echo "Error: Backup failed for container $CURRENT_CT_ID."
         echo "$VZDUMP_OUTPUT"
         exit 1
     fi
+    # Extract the backup filename from vzdump output
     BACKUP_FILE=$(echo "$VZDUMP_OUTPUT" | grep -oP "creating vzdump archive '\K[^']+" | head -n 1)
     if [ -z "$BACKUP_FILE" ] || [ ! -f "$BACKUP_FILE" ]; then
-        echo -e "${CROSS} ${RED}No backup file found after vzdump. Expected in $BACKUP_DIR.${CL}"
+        echo "Error: No backup file found after vzdump. Expected in $BACKUP_DIR."
         ls -l "$BACKUP_DIR" 2>/dev/null
         exit 1
     fi
-    echo -e "${CHECK} ${GREEN}New backup created: $BACKUP_FILE${CL}"
+    echo "New backup created: $BACKUP_FILE"
 fi
 
-# Delete the original container
-debug "Deleting container $CURRENT_CT_ID"
-echo -e "${INFO} ${CYAN}Deleting original container $CURRENT_CT_ID...${CL}"
+# Line 104: Delete the original container
+echo "Deleting original container $CURRENT_CT_ID..."
 pct destroy "$CURRENT_CT_ID" || {
-    echo -e "${CROSS} ${RED}Failed to delete container $CURRENT_CT_ID.${CL}"
+    echo "Error: Failed to delete container $CURRENT_CT_ID."
     exit 1
 }
 
-# Restore the container with the new CT ID
-debug "Restoring as CT $NEW_CT_ID"
-echo -e "${INFO} ${CYAN}Restoring container as $NEW_CT_ID...${CL}"
+# Line 110: Restore the container with the new CT ID
+echo "Restoring container as $NEW_CT_ID..."
 pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVILEGED || {
-    echo -e "${CROSS} ${RED}Failed to restore container as $NEW_CT_ID.${CL}"
+    echo "Error: Failed to restore container as $NEW_CT_ID."
     exit 1
 }
 
-# Start the new container
-debug "Starting CT $NEW_CT_ID"
-echo -e "${INFO} ${CYAN}Starting container $NEW_CT_ID...${CL}"
+# Line 116: Start the new container
+echo "Starting container $NEW_CT_ID..."
 pct start "$NEW_CT_ID" || {
-    echo -e "${CROSS} ${RED}Failed to start container $NEW_CT_ID.${CL}"
+    echo "Error: Failed to start container $NEW_CT_ID."
     exit 1
 }
 
-# Verify the container is running
-debug "Verifying CT $NEW_CT_ID status"
+# Line 122: Verify the container is running
 if pct status "$NEW_CT_ID" | grep -q "status: running"; then
-    echo -e "${CHECK} ${GREEN}Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running.${CL}"
+    echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
 else
-    echo -e "${CROSS} ${RED}Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'.${CL}"
+    echo "Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'."
     exit 1
 fi
 
+# Line 129: Optional cleanup (commented out)
+# echo "Cleaning up backup file $BACKUP_FILE..."
+# rm -f "$BACKUP_FILE"
+
+# Line 132: Exit successfully
 exit 0
