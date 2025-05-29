@@ -3,6 +3,7 @@
 # Uses whiptail to select the current container and input the new CT ID
 # Uses the container's storage for backup, checks disk space before backup and restore
 # Skips stop if container is already stopped, dynamically finds or creates backup
+# Delays deletion of old container until new container is confirmed running
 
 # Initialize logging
 LOG_FILE="/var/log/change_ct_id.log"
@@ -231,20 +232,11 @@ fi
 echo "Checking disk space for restore on $CONTAINER_STORAGE..."
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
 
-# Delete the original container
-echo "Deleting original container $CURRENT_CT_ID..."
-pct destroy "$CURRENT_CT_ID" || {
-    echo "Error: Failed to delete container $CURRENT_CT_ID."
-    log "Error: Failed to delete CT $CURRENT_CT_ID"
-    exit 2
-}
-log "Deleted CT $CURRENT_CT_ID"
-
 # Restore the container with the new CT ID
 echo "Restoring container as $NEW_CT_ID..."
 pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVILEGED || {
-    echo "Error: Failed to restore container as $NEW_CT_ID."
-    log "Error: Failed to restore CT $NEW_CT_ID"
+    echo "Error: Failed to restore container as $NEW_CT_ID. Old container $CURRENT_CT_ID preserved."
+    log "Error: Failed to restore CT $NEW_CT_ID, preserved CT $CURRENT_CT_ID"
     exit 2
 }
 log "Restored CT $NEW_CT_ID"
@@ -252,21 +244,35 @@ log "Restored CT $NEW_CT_ID"
 # Start the new container
 echo "Starting container $NEW_CT_ID..."
 pct start "$NEW_CT_ID" || {
-    echo "Error: Failed to start container $NEW_CT_ID."
-    log "Error: Failed to start CT $NEW_CT_ID"
+    echo "Error: Failed to start container $NEW_CT_ID. Old container $CURRENT_CT_ID preserved."
+    log "Error: Failed to start CT $NEW_CT_ID, preserved CT $CURRENT_CT_ID"
     exit 2
 }
 log "Started CT $NEW_CT_ID"
 
 # Verify the container is running
 if pct status "$NEW_CT_ID" | grep -q "status: running"; then
-    echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
-    log "Success: Changed CT $CURRENT_CT_ID to $NEW_CT_ID"
+    echo "New container $NEW_CT_ID is running."
+    log "Verified CT $NEW_CT_ID is running"
 else
-    echo "Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'."
-    log "Warning: CT $NEW_CT_ID not running"
+    echo "Error: Container $NEW_CT_ID restored but not running. Old container $CURRENT_CT_ID preserved."
+    echo "Check logs with 'journalctl -u pve*'."
+    log "Error: CT $NEW_CT_ID not running, preserved CT $CURRENT_CT_ID"
     exit 2
 fi
+
+# Delete the original container (only after new container is confirmed running)
+echo "Deleting original container $CURRENT_CT_ID..."
+pct destroy "$CURRENT_CT_ID" || {
+    echo "Warning: Failed to delete original container $CURRENT_CT_ID. New container $NEW_CT_ID is running."
+    log "Warning: Failed to delete CT $CURRENT_CT_ID, CT $NEW_CT_ID running"
+    exit 2
+}
+log "Deleted CT $CURRENT_CT_ID"
+
+# Final success message
+echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
+log "Success: Changed CT $CURRENT_CT_ID to $NEW_CT_ID"
 
 # Optional cleanup (commented out)
 # echo "Cleaning up backup file $BACKUP_FILE..."
