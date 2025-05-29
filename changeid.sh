@@ -2,7 +2,7 @@
 # Line 1
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
 # Automatically detects the container's storage from its configuration
-# Skips stop if container is already stopped, uses exact backup filename
+# Skips stop if container is already stopped, dynamically finds or creates backup
 # Usage: ./change_ct_id.sh <current_ct_id> <new_ct_id>
 
 # Line 7: Check if exactly 2 arguments are provided
@@ -21,70 +21,69 @@ if ! [[ "$CURRENT_CT_ID" =~ ^[0-9]+$ ]] || ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; the
     exit 1
 fi
 
-# Line 21: Define backup storage and existing backup file
+# Line 21: Define backup storage
 BACKUP_STORAGE="local"
 BACKUP_DIR="/var/lib/vz/dump"
-EXISTING_BACKUP="$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-2025_05_28-21_49_00.tar.zst"
 
-# Line 26: Check if running as root
+# Line 24: Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
     echo "Error: This script must be run as root."
     exit 1
 fi
 
-# Line 31: Check if Proxmox tools are available
+# Line 29: Check if Proxmox tools are available
 if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1; then
     echo "Error: Proxmox tools (pct or vzdump) not found. Is this a Proxmox system?"
     exit 1
 fi
 
-# Line 36: Check if the current CT ID exists
+# Line 34: Check if the current CT ID exists
 if ! pct status "$CURRENT_CT_ID" >/dev/null 2>&1; then
     echo "Error: Container with ID $CURRENT_CT_ID does not exist."
     exit 1
 fi
 
-# Line 41: Check if the new CT ID is already in use
+# Line 39: Check if the new CT ID is already in use
 if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
     echo "Error: Container with ID $NEW_CT_ID already exists."
     exit 1
 fi
 
-# Line 46: Check if backup storage exists
+# Line 44: Check if backup storage exists
 if ! pvesm status | grep -q "^$BACKUP_STORAGE"; then
     echo "Error: Backup storage '$BACKUP_STORAGE' not found."
     exit 1
 fi
 
-# Line 51: Detect container storage from configuration
+# Line 49: Detect container storage from configuration
 CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: Configuration file $CONFIG_FILE not found."
     exit 1
 fi
 
-# Line 57: Extract storage from rootfs line
+# Line 55: Extract storage from rootfs line
 CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
 if [ -z "$CONTAINER_STORAGE" ]; then
     echo "Error: Could not detect container storage from $CONFIG_FILE."
     exit 1
 fi
 
-# Line 62: Verify container storage exists
+# Line 60: Verify container storage exists
 if ! pvesm status | grep -q "^$CONTAINER_STORAGE"; then
     echo "Error: Container storage '$CONTAINER_STORAGE' not found."
     exit 1
 fi
 echo "Detected container storage: $CONTAINER_STORAGE"
 
-# Line 68: Check if the container is unprivileged
+# Line 66: Check if the container is unprivileged
 UNPRIVILEGED=""
 if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
     UNPRIVILEGED="--unprivileged"
     echo "Detected unprivileged container. Will use --unprivileged flag for restore."
 fi
 
-# Line 74: Stop the container if running
+# Line 72: Stop the container if running
 echo "Checking container $CURRENT_CT_ID status..."
 STATUS=$(pct status "$CURRENT_CT_ID" 2>/dev/null)
 if echo "$STATUS" | grep -q "status: running"; then
@@ -97,14 +96,15 @@ else
     echo "Container $CURRENT_CT_ID is already stopped (status: $STATUS)."
 fi
 
-# Line 85: Check for existing backup or create a new one
-BACKUP_FILE="$EXISTING_BACKUP"
-echo "Checking for existing backup: $BACKUP_FILE..."
-if [ ! -f "$BACKUP_FILE" ]; then
-    echo "Existing backup not found. Checking permissions and path..."
+# Line 83: Check for existing backup or create a new one
+echo "Searching for existing backup for CT $CURRENT_CT_ID..."
+BACKUP_FILE=$(ls -t "$BACKUP_DIR/vzdump-lxc-$CURRENT_CT_ID-"*.tar.zst 2>/dev/null | head -n 1)
+if [ -n "$BACKUP_FILE" ] && [ -f "$BACKUP_FILE" ]; then
+    echo "Found existing backup: $BACKUP_FILE"
+else
+    echo "No existing backup found. Checking permissions and path..."
     ls -l "$BACKUP_DIR" 2>/dev/null || echo "Error: Cannot access $BACKUP_DIR"
     echo "Creating new backup of container $CURRENT_CT_ID..."
-    # Run vzdump and capture its output to get the exact filename
     VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
     VZDUMP_STATUS=$?
     if [ $VZDUMP_STATUS -ne 0 ]; then
