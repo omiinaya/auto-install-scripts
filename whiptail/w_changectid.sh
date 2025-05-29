@@ -3,6 +3,7 @@
 # Uses whiptail to select the current container and new CT ID
 # Automatically configures backup storage if none exists
 # Checks disk space before backup and restore, using ZFS pool space to avoid subvolume quotas
+# Validates ZFS dataset mountpoints for dir storages
 # Skips stop if container is already stopped, dynamically finds or creates backup
 # Delays deletion of old container until new container is confirmed running
 # Supports --verbose flag for detailed debug logging
@@ -213,12 +214,45 @@ check_disk_space() {
             exit 2
         fi
         local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+        if [ -z "$storage_path" ]; then
+            debug_log "No path in pvesm get, attempting fallback for dir storage"
+            if [ "$storage_type" = "dir" ]; then
+                # Assume path based on storage name (e.g., /rpool/backup for zfs-backup)
+                storage_path="/$storage"
+                debug_log "Trying fallback path: $storage_path"
+                if [ "$storage" = "zfs-backup" ]; then
+                    storage_path="/rpool/backup"
+                    debug_log "Using ZFS dataset path for zfs-backup: $storage_path"
+                    # Check if ZFS dataset is mounted
+                    local dataset="rpool/backup"
+                    debug_log "Running: zfs get -p -H -o value mountpoint $dataset"
+                    local mountpoint=$(zfs get -p -H -o value mountpoint "$dataset" 2>/dev/null)
+                    local zfs_get_exit=$?
+                    debug_log "zfs get mountpoint exit code: $zfs_get_exit, output: $mountpoint"
+                    if [ $zfs_get_exit -eq 0 ] && [ "$mountpoint" != "none" ] && [ -n "$mountpoint" ]; then
+                        storage_path="$mountpoint"
+                        debug_log "Using ZFS dataset mountpoint: $storage_path"
+                        if [ ! -d "$storage_path" ]; then
+                            debug_log "Mountpoint $storage_path does not exist, attempting to mount"
+                            zfs mount "$dataset" 2>/dev/null
+                            local zfs_mount_exit=$?
+                            debug_log "zfs mount exit code: $zfs_mount_exit"
+                            if [ $zfs_mount_exit -ne 0 ]; then
+                                log "Error: Could not mount ZFS dataset '$dataset' for storage '$storage'."
+                                debug_log "Failed to mount $dataset"
+                                exit 2
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
         if [ "$storage_type" = "nfs" ]; then
             debug_log "NFS storage detected, using mountpoint from pvesm status"
             storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
             debug_log "NFS mountpoint: $storage_path"
         fi
-        debug_log "Storage path from pvesm get: $storage_path"
+        debug_log "Storage path: $storage_path"
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
             log "Error: Invalid or inaccessible storage path for '$storage'."
             debug_log "Storage path invalid: $storage_path"
