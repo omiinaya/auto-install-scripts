@@ -14,7 +14,7 @@ VERBOSE=0
 for arg in "$@"; do
     if [ "$arg" = "--verbose" ]; then
         VERBOSE=1
-        shift # Remove --verbose from arguments
+        shift
     fi
 done
 
@@ -31,24 +31,24 @@ debug_log() {
 }
 
 # Check if whiptail is available
-debug_log "Checking for whiptail"
+debug_log "Checking for whiptail: $(command -v whiptail)"
 if ! command -v whiptail >/dev/null 2>&1; then
     log "Error: whiptail not found. Please install it with 'apt install whiptail'."
     exit 2
 fi
 
 # Check if running as root
-debug_log "Checking if running as root"
+debug_log "Checking user ID: $(id -u)"
 if [ "$(id -u)" -ne 0 ]; then
     log "Error: This script must be run as root."
     exit 1
 fi
 
 # Check if Proxmox tools are available
-debug_log "Checking for Proxmox tools (pct, vzdump, pvesm)"
+debug_log "Checking Proxmox tools: pct=$(command -v pct), vzdump=$(command -v vzdump), pvesm=$(command -v pvesm)"
 if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1 || ! command -v pvesm >/dev/null 2>&1; then
     log "Error: Proxmox tools (pct, vzdump, or pvesm) not found. Is this a Proxmox system?"
-    exit 1
+    exit 2
 fi
 
 # Get list of containers for whiptail menu
@@ -114,7 +114,7 @@ fi
 log "New container ID: $NEW_CT_ID"
 
 # Detect container configuration
-debug_log "Reading config file for CT $CURRENT_CT_ID"
+debug_log "Reading config file for CT $CURRENT_CT_ID: /etc/pve/lxc/$CURRENT_CT_ID.conf"
 CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
     log "Error: Configuration file $CONFIG_FILE not found."
@@ -146,14 +146,21 @@ check_disk_space() {
     debug_log "Starting disk space check for storage=$storage, required_space=$required_space bytes"
     local storage_type=$(pvesm status | grep "^$storage" | awk '{print $2}')
     debug_log "Storage type: $storage_type"
+    debug_log "pvesm status output: $(pvesm status | grep "^$storage")"
+    debug_log "pvesm get output: $(pvesm get "$storage" --human-readable false 2>/dev/null)"
     local available_space=""
 
-    if [ "$storage_type" = "zfs" ]; then
-        debug_log "ZFS storage detected, attempting to find subvolume for CT $CURRENT_CT_ID"
-        local zfs_subvol=$(pvesm list "$storage" 2>/dev/null | grep "lxc/$CURRENT_CT_ID" | awk '{print $1}' | cut -d: -f2)
+    if [ "$storage_type" = "zfs" ] || [ "$storage_type" = "zfspool" ]; then
+        debug_log "ZFS/zfspool storage detected, attempting to find subvolume for CT $CURRENT_CT_ID"
+        debug_log "Running: pvesm list $storage"
+        local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
+        debug_log "pvesm list output: $pvesm_list_output"
+        local zfs_subvol=$(echo "$pvesm_list_output" | grep "lxc/$CURRENT_CT_ID" | awk '{print $1}' | cut -d: -f2)
         if [ -n "$zfs_subvol" ]; then
             debug_log "Found ZFS subvolume: $zfs_subvol"
+            debug_log "Running: zfs get -p -H -o value available $zfs_subvol"
             available_space=$(zfs get -p -H -o value available "$zfs_subvol" 2>/dev/null)
+            debug_log "zfs get output: $available_space"
             if [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
                 debug_log "ZFS subvolume available space: $available_space bytes"
             else
@@ -165,10 +172,17 @@ check_disk_space() {
         fi
         if [ -z "$available_space" ]; then
             debug_log "Falling back to ZFS pool"
-            local zfs_pool=$(zfs list -H -o name 2>/dev/null | head -n 1)
+            local zfs_pool=$(pvesm get "$storage" --human-readable false 2>/dev/null | grep '^pool' | awk '{print $2}')
+            debug_log "ZFS pool from pvesm get: $zfs_pool"
+            if [ -z "$zfs_pool" ]; then
+                debug_log "No pool field in pvesm get, trying zfs list"
+                zfs_pool=$(zfs list -H -o name 2>/dev/null | head -n 1)
+                debug_log "ZFS pool from zfs list: $zfs_pool"
+            fi
             if [ -n "$zfs_pool" ]; then
-                debug_log "Found ZFS pool: $zfs_pool"
+                debug_log "Running: zfs get -p -H -o value available $zfs_pool"
                 available_space=$(zfs get -p -H -o value available "$zfs_pool" 2>/dev/null)
+                debug_log "zfs get output: $available_space"
                 if [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
                     debug_log "ZFS pool available space: $available_space bytes"
                 else
@@ -181,7 +195,7 @@ check_disk_space() {
         fi
         if [ -z "$available_space" ]; then
             log "Error: Could not determine available space for ZFS storage '$storage'."
-            log "Hint: Check ZFS configuration with 'zfs list' or 'pvesm get $storage'. Ensure the ZFS pool or subvolume is accessible."
+            log "Hint: Check ZFS configuration with 'zfs list', 'pvesm get $storage', or 'pvesm list $storage'."
             exit 2
         fi
     else
@@ -197,13 +211,15 @@ check_disk_space() {
             storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
             debug_log "NFS mountpoint: $storage_path"
         fi
+        debug_log "Storage path from pvesm get: $storage_path"
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
             log "Error: Invalid or inaccessible storage path for '$storage'."
             debug_log "Storage path invalid: $storage_path"
             exit 2
         fi
-        debug_log "Querying available space with df on $storage_path"
+        debug_log "Running: df --block-size=1 --output=avail $storage_path"
         available_space=$(df --block-size=1 --output=avail "$storage_path" | tail -n 1)
+        debug_log "df output: $available_space"
         if [ -z "$available_space" ] || ! [[ "$available_space" =~ ^[0-9]+$ ]]; then
             log "Error: Could not determine available space for storage '$storage'."
             debug_log "Invalid df output: $available_space"
