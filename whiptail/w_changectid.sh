@@ -236,40 +236,44 @@ check_disk_space() {
             exit 2
         fi
         local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
-        if [ -z "$storage_path" ]; then
+        if [ -z "$storage_path" ] && [ "$storage_type" = "nfs" ]; then
+            debug_log "NFS storage detected, attempting to get path from pvesm get again"
+            storage_path=$(pvesm get "$storage" --human-readable false 2>/dev/null | grep '^path' | awk '{print $2}')
+            debug_log "NFS path from pvesm get: $storage_path"
+            if [ -z "$storage_path" ]; then
+                debug_log "No path in pvesm get, falling back to mount table"
+                # Query the mount table to find the NFS mountpoint
+                storage_path=$(grep "$storage" /proc/mounts | awk '{print $2}' | head -n 1)
+                debug_log "NFS mountpoint from /proc/mounts: $storage_path"
+            fi
+        fi
+        if [ -z "$storage_path" ] && [ "$storage_type" = "dir" ]; then
             debug_log "No path in pvesm get, attempting fallback for dir storage"
-            if [ "$storage_type" = "dir" ]; then
-                # Generate a generic path based on storage name
-                storage_path="/$(echo "$storage" | tr '-' '/')"
-                debug_log "Trying fallback path: $storage_path"
-                # Check if it’s a ZFS dataset
-                local dataset=$(echo "$storage" | tr '-' '/')
-                debug_log "Checking if $dataset is a ZFS dataset"
-                debug_log "Running: zfs get -p -H -o value mountpoint $dataset"
-                local mountpoint=$(zfs get -p -H -o value mountpoint "$dataset" 2>/dev/null)
-                local zfs_get_exit=$?
-                debug_log "zfs get mountpoint exit code: $zfs_get_exit, output: $mountpoint"
-                if [ $zfs_get_exit -eq 0 ] && [ "$mountpoint" != "none" ] && [ -n "$mountpoint" ]; then
-                    storage_path="$mountpoint"
-                    debug_log "Using ZFS dataset mountpoint: $storage_path"
-                    if [ ! -d "$storage_path" ]; then
-                        debug_log "Mountpoint $storage_path does not exist, attempting to mount"
-                        zfs mount "$dataset" 2>/dev/null
-                        local zfs_mount_exit=$?
-                        debug_log "zfs mount exit code: $zfs_mount_exit"
-                        if [ $zfs_mount_exit -ne 0 ]; then
-                            log "Error: Could not mount ZFS dataset '$dataset' for storage '$storage'."
-                            debug_log "Failed to mount $dataset"
-                            exit 2
-                        fi
+            # Generate a generic path based on storage name
+            storage_path="/$(echo "$storage" | tr '-' '/')"
+            debug_log "Trying fallback path: $storage_path"
+            # Check if it’s a ZFS dataset
+            local dataset=$(echo "$storage" | tr '-' '/')
+            debug_log "Checking if $dataset is a ZFS dataset"
+            debug_log "Running: zfs get -p -H -o value mountpoint $dataset"
+            local mountpoint=$(zfs get -p -H -o value mountpoint "$dataset" 2>/dev/null)
+            local zfs_get_exit=$?
+            debug_log "zfs get mountpoint exit code: $zfs_get_exit, output: $mountpoint"
+            if [ $zfs_get_exit -eq 0 ] && [ "$mountpoint" != "none" ] && [ -n "$mountpoint" ]; then
+                storage_path="$mountpoint"
+                debug_log "Using ZFS dataset mountpoint: $storage_path"
+                if [ ! -d "$storage_path" ]; then
+                    debug_log "Mountpoint $storage_path does not exist, attempting to mount"
+                    zfs mount "$dataset" 2>/dev/null
+                    local zfs_mount_exit=$?
+                    debug_log "zfs mount exit code: $zfs_mount_exit"
+                    if [ $zfs_mount_exit -ne 0 ]; then
+                        log "Error: Could not mount ZFS dataset '$dataset' for storage '$storage'."
+                        debug_log "Failed to mount $dataset"
+                        exit 2
                     fi
                 fi
             fi
-        fi
-        if [ "$storage_type" = "nfs" ]; then
-            debug_log "NFS storage detected, using mountpoint from pvesm status"
-            storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
-            debug_log "NFS mountpoint: $storage_path"
         fi
         debug_log "Storage path: $storage_path"
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
