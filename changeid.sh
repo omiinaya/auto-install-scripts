@@ -60,7 +60,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Extract storage from rootfs line (e.g., rootfs: local-zfs:subvol-139-disk-0,size=8G)
+# Extract storage from rootfs line (e.g., rootfs: mrx-nas:subvol-139-disk-0,size=8G)
 CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
 if [ -z "$CONTAINER_STORAGE" ]; then
     echo "Error: Could not detect container storage from $CONFIG_FILE."
@@ -101,7 +101,7 @@ vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snaps
 if [ ! -f "$BACKUP_FILE" ]; then
     echo "Error: Backup file $BACKUP_FILE not found."
     exit 1
-}
+
 
 # Delete the original container
 echo "Deleting original container $CURRENT_CT_ID..."
@@ -120,6 +120,20 @@ pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVIL
 # Start the new container
 echo "Starting container $NEW_CT_ID..."
 pct start "$NEW_CT_ID" || {
-    echo "Error: Failed### Starting container 141...
-Success: Container ID changed from 139 to 141 and is running.
+    echo "Error: Failed to start container $NEW_CT_ID."
+    exit 1
+}
+
+# Verify the container is running
+if pct status "$NEW_CT_ID" | grep -q "running"; then
+    echo "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
+else {
+    echo "Warning: Container $NEW_CT_ID restored but not running. Check logs with 'journalctl -u pve*'."
+    exit 1
+}
+
+# Clean up backup file (optional, comment out if you want to keep it)
+# echo "Cleaning up backup file $BACKUP_FILE..."
+# rm -f "$BACKUP_FILE"
+
 exit 0
