@@ -303,8 +303,23 @@ check_disk_space() {
     debug_log "Comparing available_space=$available_space with required_space=$required_space"
     if [ "$available_space" -lt "$required_space" ]; then
         local other_storages=$(pvesm status | grep -v "^$storage" | grep "active" | awk '{print $1 " (" $2 ", " $6/1024 " MB available)"}')
+        local quota_hint=""
+        if [ "$storage_type" = "dir" ]; then
+            # Check for a ZFS dataset quota
+            local zfs_list=$(zfs list -H -o name 2>/dev/null)
+            local dataset=$(echo "$zfs_list" | grep -E "(rpool|local-zfs-2)/backup(-[0-9]+)?$" | head -n 1)
+            if [ -n "$dataset" ]; then
+                local dataset_quota=$(zfs get -p -H -o value quota "$dataset" 2>/dev/null)
+                if [ "$dataset_quota" != "none" ] && [ -n "$dataset_quota" ]; then
+                    quota_hint="ZFS dataset '$dataset' has a quota of $((dataset_quota / 1024 / 1024)) MB. Increase it with 'zfs set quota=<new_size> $dataset' or remove it with 'zfs set quota=none $dataset'."
+                fi
+            fi
+        fi
         log "Error: Insufficient disk space on storage '$storage'."
         log "Required: $((required_space / 1024 / 1024)) MB, Available: $((available_space / 1024 / 1024)) MB"
+        if [ -n "$quota_hint" ]; then
+            log "Hint: $quota_hint"
+        fi
         log "Hint: Free up space on '$storage' (e.g., remove old backups or snapshots), or use a different backup storage."
         if [ -n "$other_storages" ]; then
             log "Other available storages: $other_storages"
