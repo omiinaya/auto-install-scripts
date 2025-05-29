@@ -156,7 +156,7 @@ check_disk_space() {
         debug_log "Running: pvesm list $storage"
         local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
         debug_log "pvesm list output: $pvesm_list_output"
-        local zfs_subvol=$(echo "$pvesm_list_output" | grep "lxc/$CURRENT_CT_ID" | awk '{print $1}' | cut -d: -f2)
+        local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | cut -d: -f2)
         if [ -n "$zfs_subvol" ]; then
             debug_log "Found ZFS subvolume: $zfs_subvol"
             debug_log "Running: zfs get -p -H -o value available $zfs_subvol"
@@ -274,26 +274,32 @@ check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
 
 # Check if container storage supports backups
 debug_log "Checking if $CONTAINER_STORAGE supports backups"
+debug_log "Running: pvesm status | grep '^$CONTAINER_STORAGE'"
+debug_log "pvesm status output: $(pvesm status | grep '^$CONTAINER_STORAGE')"
 if ! pvesm status | grep "^$CONTAINER_STORAGE" | grep -q "backup"; then
     log "Warning: Storage '$CONTAINER_STORAGE' does not support backups."
     debug_log "No backup support in $CONTAINER_STORAGE, prompting for backup storage"
     # Get list of storages that support backups
+    debug_log "Running: pvesm status | grep 'backup'"
     BACKUP_STORAGES=$(pvesm status | grep "backup" | awk '{print $1}')
+    debug_log "Found backup storages: $BACKUP_STORAGES"
     if [ -z "$BACKUP_STORAGES" ]; then
         log "Error: No storage available for backups. Please configure a storage with 'backup' content type."
         log "Hint: For ZFS, create a dataset (e.g., 'zfs create rpool/backup') and add it as a 'directory' storage with 'is_mountpoint yes'."
         log "Example: pvesm add dir zfs-backup --path /rpool/backup --content backup --is_mountpoint yes"
+        log "For NFS (e.g., mrx-nas), ensure it has 'backup' content: pvesm set mrx-nas --content backup"
+        debug_log "No backup storages found"
         exit 2
     fi
-    debug_log "Found backup storages: $BACKUP_STORAGES"
     # Build whiptail menu for backup storage selection
     BACKUP_MENU_OPTIONS=()
     while read -r storage; do
         BACKUP_MENU_OPTIONS+=("$storage" "Storage: $storage")
         debug_log "Added backup storage option: $storage"
     done <<< "$BACKUP_STORAGES"
+    debug_log "Displaying whiptail menu for backup storage selection"
     BACKUP_STORAGE=$(whiptail --title "Select Backup Storage" --menu "Choose a storage for backups:" 15 60 6 \
-        "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
+        "${BACKUP_MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
     if [ $? -ne 0 ]; then
         log "Backup storage selection cancelled."
         exit 1
