@@ -2,7 +2,7 @@
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
 # Uses whiptail to select the current container and new CT ID
 # Automatically configures backup storage if none exists
-# Checks disk space before backup and restore
+# Checks disk space before backup and restore, using ZFS pool space to avoid subvolume quotas
 # Skips stop if container is already stopped, dynamically finds or creates backup
 # Delays deletion of old container until new container is confirmed running
 # Supports --verbose flag for detailed debug logging
@@ -154,51 +154,51 @@ check_disk_space() {
     local available_space=""
 
     if [ "$storage_type" = "zfs" ] || [ "$storage_type" = "zfspool" ]; then
-        debug_log "ZFS/zfspool storage detected, attempting to find subvolume for CT $CURRENT_CT_ID"
-        debug_log "Running: pvesm list $storage"
-        local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
-        debug_log "pvesm list output: $pvesm_list_output"
-        local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | sed "s|^$storage:||")
-        if [ -n "$zfs_subvol" ]; then
-            local full_subvol="$storage/$zfs_subvol"
-            debug_log "Found ZFS subvolume: $full_subvol"
-            debug_log "Running: zfs get -p -H -o value available $full_subvol"
-            available_space=$(zfs get -p -H -o value available "$full_subvol" 2>/dev/null)
+        debug_log "ZFS/zfspool storage detected, using pool space to avoid subvolume quotas"
+        local zfs_pool=$(echo "$storage_info" | grep '^pool' | awk '{print $2}')
+        debug_log "ZFS pool from pvesm get: $zfs_pool"
+        if [ -z "$zfs_pool" ]; then
+            debug_log "No pool field in pvesm get, trying zfs list"
+            debug_log "Running: zfs list -H -o name"
+            zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup$' | head -n 1)
+            debug_log "zfs list output: $(zfs list -H -o name 2>/dev/null)"
+            debug_log "ZFS pool from zfs list: $zfs_pool"
+        fi
+        if [ -n "$zfs_pool" ]; then
+            debug_log "Running: zfs get -p -H -o value available $zfs_pool"
+            available_space=$(zfs get -p -H -o value available "$zfs_pool" 2>/dev/null)
             local zfs_get_exit=$?
             debug_log "zfs get exit code: $zfs_get_exit, output: $available_space"
             if [ $zfs_get_exit -eq 0 ] && [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
-                debug_log "ZFS subvolume available space: $available_space bytes"
+                debug_log "ZFS pool available space: $available_space bytes"
             else
-                debug_log "Warning: Could not get available space for subvolume $full_subvol"
+                debug_log "Error: Could not get available space for pool $zfs_pool"
                 available_space=""
             fi
         else
-            debug_log "No ZFS subvolume found for CT $CURRENT_CT_ID"
-        fi
-        if [ -z "$available_space" ]; then
-            debug_log "Falling back to ZFS pool"
-            local zfs_pool=$(echo "$storage_info" | grep '^pool' | awk '{print $2}')
-            debug_log "ZFS pool from pvesm get: $zfs_pool"
-            if [ -z "$zfs_pool" ]; then
-                debug_log "No pool field in pvesm get, trying zfs list"
-                debug_log "Running: zfs list -H -o name"
-                zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup$' | head -n 1)
-                debug_log "zfs list output: $(zfs list -H -o name 2>/dev/null)"
-                debug_log "ZFS pool from zfs list: $zfs_pool"
-            fi
-            if [ -n "$zfs_pool" ]; then
-                debug_log "Running: zfs get -p -H -o value available $zfs_pool"
-                available_space=$(zfs get -p -H -o value available "$zfs_pool" 2>/dev/null)
+            debug_log "No ZFS pool found, checking subvolume as fallback"
+            debug_log "Running: pvesm list $storage"
+            local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
+            debug_log "pvesm list output: $pvesm_list_output"
+            local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | sed "s|^$storage:||")
+            if [ -n "$zfs_subvol" ]; then
+                local full_subvol="$storage/$zfs_subvol"
+                debug_log "Found ZFS subvolume: $full_subvol"
+                debug_log "Running: zfs get -p -H -o value available $full_subvol"
+                debug_log "Running: zfs get -p -H -o value quota $full_subvol"
+                local subvol_quota=$(zfs get -p -H -o value quota "$full_subvol" 2>/dev/null)
+                debug_log "Subvolume quota: $subvol_quota"
+                available_space=$(zfs get -p -H -o value available "$full_subvol" 2>/dev/null)
                 local zfs_get_exit=$?
                 debug_log "zfs get exit code: $zfs_get_exit, output: $available_space"
                 if [ $zfs_get_exit -eq 0 ] && [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
-                    debug_log "ZFS pool available space: $available_space bytes"
+                    debug_log "ZFS subvolume available space: $available_space bytes"
                 else
-                    debug_log "Error: Could not get available space for pool $zfs_pool"
+                    debug_log "Warning: Could not get available space for subvolume $full_subvol"
                     available_space=""
                 fi
             else
-                debug_log "No ZFS pool found"
+                debug_log "No ZFS subvolume found for CT $CURRENT_CT_ID"
             fi
         fi
         if [ -z "$available_space" ]; then
