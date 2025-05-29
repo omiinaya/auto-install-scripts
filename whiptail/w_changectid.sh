@@ -6,7 +6,7 @@
 # Validates ZFS dataset mountpoints for dir storages
 # Skips stop if CT/VM is already stopped, dynamically finds or creates backup
 # Delays deletion of old CT/VM until new one is confirmed running
-# Supports --verbose flag for detailed debug logging
+# Supports --verbose flag for detailed debug logging with timestamps
 
 # Initialize logging
 LOG_FILE="/var/log/change_ct_vm_id.log"
@@ -27,7 +27,7 @@ log() {
 
 debug_log() {
     if [ "$VERBOSE" -eq 1 ]; then
-        echo "[DEBUG] $*" | tee -a "$LOG_FILE"
+        echo "[DEBUG $(date '+%Y-%m-%d %H:%M:%S.%N')] $*" | tee -a "$LOG_FILE"
     fi
     echo "$(date '+%Y-%m-%d %H:%M:%S') - [DEBUG] $*" >> "$LOG_FILE"
 }
@@ -298,6 +298,39 @@ check_disk_space() {
     return 0
 }
 
+# Function to wait for storage readiness
+wait_for_storage() {
+    local storage="$1"
+    local path="$2"
+    local max_attempts=5
+    local attempt=1
+    local sleep_time=1
+
+    debug_log "Waiting for storage $storage to be ready at path $path"
+    while [ $attempt -le $max_attempts ]; do
+        debug_log "Attempt $attempt: Checking if storage $storage is ready"
+        local storage_info=$(pvesm get "$storage" --human-readable false 2>/dev/null)
+        local pvesm_get_exit=$?
+        debug_log "pvesm get exit code: $pvesm_get_exit, output: $storage_info"
+        local retrieved_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+        if [ $pvesm_get_exit -eq 0 ] && [ -n "$retrieved_path" ] && [ -d "$retrieved_path" ]; then
+            debug_log "Storage $storage is ready with path $retrieved_path"
+            return 0
+        fi
+        debug_log "Storage $storage not ready yet, sleeping for $sleep_time seconds"
+        sleep $sleep_time
+        attempt=$((attempt + 1))
+    done
+
+    debug_log "Storage $storage not ready after $max_attempts attempts, using custom path $path"
+    if [ -d "$path" ]; then
+        return 0
+    else
+        log "Error: Storage $storage path $path is not accessible after waiting."
+        return 1
+    fi
+}
+
 # Function to configure backup storage
 configure_backup_storage() {
     debug_log "Configuring backup storage for $ENTITY_TYPE $CURRENT_ID on $CONTAINER_STORAGE"
@@ -334,13 +367,22 @@ configure_backup_storage() {
                     BACKUP_STORAGE="$backup_storage_name"
                     backup_storage_created=1
                     backup_path="/$full_dataset"
-                    check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
-                    local space_check_exit=$?
-                    if [ $space_check_exit -eq 0 ]; then
-                        debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
-                        return 0
+                    wait_for_storage "$BACKUP_STORAGE" "$backup_path"
+                    if [ $? -eq 0 ]; then
+                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
+                        local space_check_exit=$?
+                        if [ $space_check_exit -eq 0 ]; then
+                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
+                            return 0
+                        else
+                            debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
+                            pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                            zfs destroy "$full_dataset" 2>/dev/null
+                            BACKUP_STORAGE=""
+                            backup_storage_created=0
+                            backup_path=""
+                        fi
                     else
-                        debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
                         pvesm remove "$BACKUP_STORAGE" 2>/dev/null
                         zfs destroy "$full_dataset" 2>/dev/null
                         BACKUP_STORAGE=""
@@ -381,6 +423,13 @@ configure_backup_storage() {
             local mkdir_exit=$?
             debug_log "mkdir exit code: $mkdir_exit"
             if [ $mkdir_exit -eq 0 ]; then
+                # Verify directory exists
+                if [ -d "$backup_path" ]; then
+                    debug_log "Backup directory $backup_path created successfully"
+                else
+                    debug_log "Backup directory $backup_path does not exist after creation"
+                    return 1
+                fi
                 debug_log "Configuring backup directory as storage: $backup_storage_name"
                 pvesm add dir "$backup_storage_name" --path "$backup_path" --content backup --is_mountpoint no 2>/dev/null
                 local pvesm_add_exit=$?
@@ -388,13 +437,22 @@ configure_backup_storage() {
                 if [ $pvesm_add_exit -eq 0 ]; then
                     BACKUP_STORAGE="$backup_storage_name"
                     backup_storage_created=1
-                    check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
-                    local space_check_exit=$?
-                    if [ $space_check_exit -eq 0 ]; then
-                        debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
-                        return 0
+                    wait_for_storage "$BACKUP_STORAGE" "$backup_path"
+                    if [ $? -eq 0 ]; then
+                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
+                        local space_check_exit=$?
+                        if [ $space_check_exit -eq 0 ]; then
+                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $CONTAINER_STORAGE"
+                            return 0
+                        else
+                            debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
+                            pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                            rm -rf "$backup_path" 2>/dev/null
+                            BACKUP_STORAGE=""
+                            backup_storage_created=0
+                            backup_path=""
+                        fi
                     else
-                        debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
                         pvesm remove "$BACKUP_STORAGE" 2>/dev/null
                         rm -rf "$backup_path" 2>/dev/null
                         BACKUP_STORAGE=""
@@ -444,6 +502,13 @@ configure_backup_storage() {
                 local mkdir_exit=$?
                 debug_log "mkdir exit code: $mkdir_exit"
                 if [ $mkdir_exit -eq 0 ]; then
+                    # Verify directory exists
+                    if [ -d "$sub_backup_path" ]; then
+                        debug_log "Backup directory $sub_backup_path created successfully"
+                    else
+                        debug_log "Backup directory $sub_backup_path does not exist after creation"
+                        continue
+                    fi
                     local sub_backup_storage_name="backup-$timestamp"
                     debug_log "Configuring backup directory as storage: $sub_backup_storage_name"
                     pvesm add dir "$sub_backup_storage_name" --path "$sub_backup_path" --content backup --is_mountpoint no 2>/dev/null
@@ -452,13 +517,21 @@ configure_backup_storage() {
                     if [ $pvesm_add_exit -eq 0 ]; then
                         BACKUP_STORAGE="$sub_backup_storage_name"
                         backup_storage_created=1
-                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$sub_backup_path"
-                        local space_check_exit=$?
-                        if [ $space_check_exit -eq 0 ]; then
-                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $storage"
-                            return 0
+                        wait_for_storage "$BACKUP_STORAGE" "$sub_backup_path"
+                        if [ $? -eq 0 ]; then
+                            check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$sub_backup_path"
+                            local space_check_exit=$?
+                            if [ $space_check_exit -eq 0 ]; then
+                                debug_log "Successfully configured $BACKUP_STORAGE for backups within $storage"
+                                return 0
+                            else
+                                debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
+                                pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                                rm -rf "$sub_backup_path" 2>/dev/null
+                                BACKUP_STORAGE=""
+                                backup_storage_created=0
+                            fi
                         else
-                            debug_log "New backup storage $BACKUP_STORAGE does not have sufficient space"
                             pvesm remove "$BACKUP_STORAGE" 2>/dev/null
                             rm -rf "$sub_backup_path" 2>/dev/null
                             BACKUP_STORAGE=""
@@ -492,11 +565,20 @@ configure_backup_storage() {
                         BACKUP_STORAGE="$backup_storage_name"
                         backup_storage_created=1
                         backup_path="/$full_dataset"
-                        check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
-                        local space_check_exit=$?
-                        if [ $space_check_exit -eq 0 ]; then
-                            debug_log "Successfully configured $BACKUP_STORAGE for backups within $storage"
-                            return 0
+                        wait_for_storage "$BACKUP_STORAGE" "$backup_path"
+                        if [ $? -eq 0 ]; then
+                            check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE" "$backup_path"
+                            local space_check_exit=$?
+                            if [ $space_check_exit -eq 0 ]; then
+                                debug_log "Successfully configured $BACKUP_STORAGE for backups within $storage"
+                                return 0
+                            else
+                                pvesm remove "$BACKUP_STORAGE" 2>/dev/null
+                                zfs destroy "$full_dataset" 2>/dev/null
+                                BACKUP_STORAGE=""
+                                backup_storage_created=0
+                                backup_path=""
+                            fi
                         else
                             pvesm remove "$BACKUP_STORAGE" 2>/dev/null
                             zfs destroy "$full_dataset" 2>/dev/null
