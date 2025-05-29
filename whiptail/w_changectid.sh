@@ -1,11 +1,11 @@
 #!/bin/bash
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
-# Uses whiptail to select the current container, new CT ID, and backup storage (if needed)
-# Uses the container's storage for backup if valid, checks disk space before backup and restore
+# Uses whiptail to select the current container and new CT ID
+# Automatically configures backup storage if none exists
+# Checks disk space before backup and restore
 # Skips stop if container is already stopped, dynamically finds or creates backup
 # Delays deletion of old container until new container is confirmed running
 # Supports --verbose flag for detailed debug logging
-# Incorporates ZFS backup setup per Proxmox forum thread
 
 # Initialize logging
 LOG_FILE="/var/log/change_ct_id.log"
@@ -148,7 +148,9 @@ check_disk_space() {
     local storage_type=$(pvesm status | grep "^$storage" | awk '{print $2}')
     debug_log "Storage type: $storage_type"
     debug_log "pvesm status output: $(pvesm status | grep "^$storage")"
-    debug_log "pvesm get output: $(pvesm get "$storage" --human-readable false 2>/dev/null)"
+    local storage_info=$(pvesm get "$storage" --human-readable false 2>/dev/null)
+    local pvesm_get_exit=$?
+    debug_log "pvesm get exit code: $pvesm_get_exit, output: $storage_info"
     local available_space=""
 
     if [ "$storage_type" = "zfs" ] || [ "$storage_type" = "zfspool" ]; then
@@ -156,17 +158,18 @@ check_disk_space() {
         debug_log "Running: pvesm list $storage"
         local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
         debug_log "pvesm list output: $pvesm_list_output"
-        local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | cut -d: -f2)
+        local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | sed "s|^$storage:||")
         if [ -n "$zfs_subvol" ]; then
-            debug_log "Found ZFS subvolume: $zfs_subvol"
-            debug_log "Running: zfs get -p -H -o value available $zfs_subvol"
-            available_space=$(zfs get -p -H -o value available "$zfs_subvol" 2>/dev/null)
+            local full_subvol="$storage/$zfs_subvol"
+            debug_log "Found ZFS subvolume: $full_subvol"
+            debug_log "Running: zfs get -p -H -o value available $full_subvol"
+            available_space=$(zfs get -p -H -o value available "$full_subvol" 2>/dev/null)
             local zfs_get_exit=$?
             debug_log "zfs get exit code: $zfs_get_exit, output: $available_space"
             if [ $zfs_get_exit -eq 0 ] && [ -n "$available_space" ] && [[ "$available_space" =~ ^[0-9]+$ ]]; then
                 debug_log "ZFS subvolume available space: $available_space bytes"
             else
-                debug_log "Warning: Could not get available space for subvolume $zfs_subvol"
+                debug_log "Warning: Could not get available space for subvolume $full_subvol"
                 available_space=""
             fi
         else
@@ -174,7 +177,7 @@ check_disk_space() {
         fi
         if [ -z "$available_space" ]; then
             debug_log "Falling back to ZFS pool"
-            local zfs_pool=$(pvesm get "$storage" --human-readable false 2>/dev/null | grep '^pool' | awk '{print $2}')
+            local zfs_pool=$(echo "$storage_info" | grep '^pool' | awk '{print $2}')
             debug_log "ZFS pool from pvesm get: $zfs_pool"
             if [ -z "$zfs_pool" ]; then
                 debug_log "No pool field in pvesm get, trying zfs list"
@@ -200,15 +203,13 @@ check_disk_space() {
         fi
         if [ -z "$available_space" ]; then
             log "Error: Could not determine available space for ZFS storage '$storage'."
-            log "Hint: Check ZFS configuration with 'zfs list', 'pvesm get $storage', or 'pvesm list $storage'."
-            log "To enable backups on ZFS, create a dataset (e.g., 'zfs create rpool/backup') and add it as a 'directory' storage with 'is_mountpoint yes'."
             exit 2
         fi
     else
         debug_log "Non-ZFS storage detected, attempting to get path"
-        local storage_info=$(pvesm get "$storage" --human-readable false 2>/dev/null)
-        if [ $? -ne 0 ]; then
+        if [ $pvesm_get_exit -ne 0 ]; then
             log "Error: Could not retrieve storage info for '$storage'."
+            debug_log "pvesm get failed with exit code $pvesm_get_exit"
             exit 2
         fi
         local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
@@ -244,6 +245,70 @@ check_disk_space() {
     log "Sufficient disk space on storage '$storage': $((available_space / 1024 / 1024)) MB available"
 }
 
+# Function to configure backup storage
+configure_backup_storage() {
+    debug_log "Checking for backup storage"
+    local backup_storages=$(pvesm status | grep "backup" | awk '{print $1}')
+    debug_log "Found backup storages: $backup_storages"
+    if [ -n "$backup_storages" ]; then
+        BACKUP_STORAGE=$(echo "$backup_storages" | head -n 1)
+        debug_log "Using existing backup storage: $BACKUP_STORAGE"
+        return 0
+    fi
+
+    debug_log "No backup storage found, attempting to configure one"
+    # Try mrx-nas (NFS)
+    if pvesm status | grep -q "^mrx-nas"; then
+        debug_log "Configuring mrx-nas for backups"
+        pvesm set mrx-nas --content backup 2>/dev/null
+        local set_exit=$?
+        debug_log "pvesm set mrx-nas exit code: $set_exit"
+        if [ $set_exit -eq 0 ] && pvesm status | grep "^mrx-nas" | grep -q "backup"; then
+            BACKUP_STORAGE="mrx-nas"
+            debug_log "Successfully configured mrx-nas for backups"
+            return 0
+        fi
+        debug_log "Failed to configure mrx-nas for backups"
+    fi
+
+    # Try creating a ZFS dataset on rpool
+    debug_log "Attempting to create ZFS dataset rpool/backup"
+    zfs create rpool/backup 2>/dev/null
+    local zfs_create_exit=$?
+    debug_log "zfs create exit code: $zfs_create_exit"
+    if [ $zfs_create_exit -eq 0 ]; then
+        debug_log "Configuring ZFS dataset as directory storage"
+        pvesm add dir zfs-backup --path /rpool/backup --content backup --is_mountpoint yes 2>/dev/null
+        local pvesm_add_exit=$?
+        debug_log "pvesm add zfs-backup exit code: $pvesm_add_exit"
+        if [ $pvesm_add_exit -eq 0 ]; then
+            BACKUP_STORAGE="zfs-backup"
+            debug_log "Successfully configured zfs-backup for backups"
+            return 0
+        fi
+        debug_log "Failed to configure zfs-backup storage"
+        zfs destroy rpool/backup 2>/dev/null
+    fi
+
+    # Try local storage
+    if pvesm status | grep -q "^local"; then
+        debug_log "Configuring local storage for backups"
+        pvesm set local --content backup 2>/dev/null
+        local set_exit=$?
+        debug_log "pvesm set local exit code: $set_exit"
+        if [ $set_exit -eq 0 ] && pvesm status | grep "^local" | grep -q "backup"; then
+            BACKUP_STORAGE="local"
+            debug_log "Successfully configured local for backups"
+            return 0
+        fi
+        debug_log "Failed to configure local for backups"
+    fi
+
+    log "Error: Could not configure a storage for backups."
+    debug_log "Failed to configure any backup storage"
+    exit 2
+}
+
 # Estimate container size (try actual usage first, then config, then default)
 debug_log "Estimating container size for CT $CURRENT_CT_ID"
 CONTAINER_DISK=$(pvesm list "$CONTAINER_STORAGE" | grep "lxc/$CURRENT_CT_ID/" | awk '{print $2}' | head -n 1)
@@ -272,51 +337,12 @@ debug_log "Required space after 20% overhead: $((REQUIRED_SPACE / 1024 / 1024)) 
 # Check disk space for backup
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
 
-# Check if container storage supports backups
-debug_log "Checking if $CONTAINER_STORAGE supports backups"
-debug_log "Running: pvesm status | grep '^$CONTAINER_STORAGE'"
-debug_log "pvesm status output: $(pvesm status | grep '^$CONTAINER_STORAGE')"
-if ! pvesm status | grep "^$CONTAINER_STORAGE" | grep -q "backup"; then
-    log "Warning: Storage '$CONTAINER_STORAGE' does not support backups."
-    debug_log "No backup support in $CONTAINER_STORAGE, prompting for backup storage"
-    # Get list of storages that support backups
-    debug_log "Running: pvesm status | grep 'backup'"
-    BACKUP_STORAGES=$(pvesm status | grep "backup" | awk '{print $1}')
-    debug_log "Found backup storages: $BACKUP_STORAGES"
-    if [ -z "$BACKUP_STORAGES" ]; then
-        log "Error: No storage available for backups. Please configure a storage with 'backup' content type."
-        log "Hint: For ZFS, create a dataset (e.g., 'zfs create rpool/backup') and add it as a 'directory' storage with 'is_mountpoint yes'."
-        log "Example: pvesm add dir zfs-backup --path /rpool/backup --content backup --is_mountpoint yes"
-        log "For NFS (e.g., mrx-nas), ensure it has 'backup' content: pvesm set mrx-nas --content backup"
-        debug_log "No backup storages found"
-        exit 2
-    fi
-    # Build whiptail menu for backup storage selection
-    BACKUP_MENU_OPTIONS=()
-    while read -r storage; do
-        BACKUP_MENU_OPTIONS+=("$storage" "Storage: $storage")
-        debug_log "Added backup storage option: $storage"
-    done <<< "$BACKUP_STORAGES"
-    debug_log "Displaying whiptail menu for backup storage selection"
-    BACKUP_STORAGE=$(whiptail --title "Select Backup Storage" --menu "Choose a storage for backups:" 15 60 6 \
-        "${BACKUP_MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
-    if [ $? -ne 0 ]; then
-        log "Backup storage selection cancelled."
-        exit 1
-    fi
-    log "Selected backup storage: $BACKUP_STORAGE"
-    debug_log "User selected backup storage: $BACKUP_STORAGE"
-else
-    BACKUP_STORAGE="$CONTAINER_STORAGE"
-    log "Using container storage for backups: $BACKUP_STORAGE"
-    debug_log "Using container storage for backups: $BACKUP_STORAGE"
-fi
+# Configure backup storage
+configure_backup_storage
 
-# Check disk space for backup storage (if different from container storage)
-if [ "$BACKUP_STORAGE" != "$CONTAINER_STORAGE" ]; then
-    debug_log "Checking disk space for backup storage $BACKUP_STORAGE"
-    check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
-fi
+# Check disk space for backup storage
+debug_log "Checking disk space for backup storage $BACKUP_STORAGE"
+check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
 
 # Check if the container is unprivileged
 debug_log "Checking if CT $CURRENT_CT_ID is unprivileged"
@@ -367,11 +393,6 @@ if [ -z "$BACKUP_FILE" ]; then
     if [ $VZDUMP_STATUS -ne 0 ]; then
         log "Error: Backup failed for container $CURRENT_CT_ID."
         log "$VZDUMP_OUTPUT"
-        if echo "$VZDUMP_OUTPUT" | grep -q "Permission denied"; then
-            log "Hint: Check storage permissions for $BACKUP_STORAGE."
-        elif echo "$VZDUMP_OUTPUT" | grep -q "No space left"; then
-            log "Hint: Storage $BACKUP_STORAGE may be full."
-        fi
         debug_log "Backup failed: $VZDUMP_OUTPUT"
         exit 2
     fi
