@@ -1,8 +1,9 @@
 #!/bin/bash
 # Script to change the CT ID of a Proxmox LXC container using backup and restore
 # Uses whiptail to select the current container and new CT ID
-# Automatically configures backup storage if none exists
+# Automatically configures backup storage if none exists, using dynamic storage names
 # Checks disk space before backup and restore, using ZFS pool space to avoid subvolume quotas
+# Validates ZFS dataset mountpoints for dir storages
 # Skips stop if container is already stopped, dynamically finds or creates backup
 # Delays deletion of old container until new container is confirmed running
 # Supports --verbose flag for detailed debug logging
@@ -160,7 +161,7 @@ check_disk_space() {
         if [ -z "$zfs_pool" ]; then
             debug_log "No pool field in pvesm get, trying zfs list"
             debug_log "Running: zfs list -H -o name"
-            zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup$' | head -n 1)
+            zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup' | head -n 1)
             debug_log "zfs list output: $(zfs list -H -o name 2>/dev/null)"
             debug_log "ZFS pool from zfs list: $zfs_pool"
         fi
@@ -213,12 +214,42 @@ check_disk_space() {
             exit 2
         fi
         local storage_path=$(echo "$storage_info" | grep '^path' | awk '{print $2}')
+        if [ -z "$storage_path" ]; then
+            debug_log "No path in pvesm get, attempting fallback for dir storage"
+            if [ "$storage_type" = "dir" ]; then
+                # Generate a generic path based on storage name
+                storage_path="/$(echo "$storage" | tr '-' '/')"
+                debug_log "Trying fallback path: $storage_path"
+                # Check if it’s a ZFS dataset
+                local dataset=$(echo "$storage" | tr '-' '/')
+                debug_log "Checking if $dataset is a ZFS dataset"
+                debug_log "Running: zfs get -p -H -o value mountpoint $dataset"
+                local mountpoint=$(zfs get -p -H -o value mountpoint "$dataset" 2>/dev/null)
+                local zfs_get_exit=$?
+                debug_log "zfs get mountpoint exit code: $zfs_get_exit, output: $mountpoint"
+                if [ $zfs_get_exit -eq 0 ] && [ "$mountpoint" != "none" ] && [ -n "$mountpoint" ]; then
+                    storage_path="$mountpoint"
+                    debug_log "Using ZFS dataset mountpoint: $storage_path"
+                    if [ ! -d "$storage_path" ]; then
+                        debug_log "Mountpoint $storage_path does not exist, attempting to mount"
+                        zfs mount "$dataset" 2>/dev/null
+                        local zfs_mount_exit=$?
+                        debug_log "zfs mount exit code: $zfs_mount_exit"
+                        if [ $zfs_mount_exit -ne 0 ]; then
+                            log "Error: Could not mount ZFS dataset '$dataset' for storage '$storage'."
+                            debug_log "Failed to mount $dataset"
+                            exit 2
+                        fi
+                    fi
+                fi
+            fi
+        fi
         if [ "$storage_type" = "nfs" ]; then
             debug_log "NFS storage detected, using mountpoint from pvesm status"
             storage_path=$(pvesm status | grep "^$storage" | awk '{print $7}')
             debug_log "NFS mountpoint: $storage_path"
         fi
-        debug_log "Storage path from pvesm get: $storage_path"
+        debug_log "Storage path: $storage_path"
         if [ -z "$storage_path" ] || [ ! -d "$storage_path" ]; then
             log "Error: Invalid or inaccessible storage path for '$storage'."
             debug_log "Storage path invalid: $storage_path"
@@ -257,37 +288,49 @@ configure_backup_storage() {
     fi
 
     debug_log "No backup storage found, attempting to configure one"
-    # Try mrx-nas (NFS)
-    if pvesm status | grep -q "^mrx-nas"; then
-        debug_log "Configuring mrx-nas for backups"
-        pvesm set mrx-nas --content backup 2>/dev/null
+    # Try NFS storages
+    local nfs_storages=$(pvesm status | grep "nfs" | awk '{print $1}')
+    debug_log "Available NFS storages: $nfs_storages"
+    if [ -n "$nfs_storages" ]; then
+        local nfs_storage=$(echo "$nfs_storages" | head -n 1)
+        debug_log "Configuring $nfs_storage for backups"
+        pvesm set "$nfs_storage" --content backup 2>/dev/null
         local set_exit=$?
-        debug_log "pvesm set mrx-nas exit code: $set_exit"
-        if [ $set_exit -eq 0 ] && pvesm status | grep "^mrx-nas" | grep -q "backup"; then
-            BACKUP_STORAGE="mrx-nas"
-            debug_log "Successfully configured mrx-nas for backups"
+        debug_log "pvesm set $nfs_storage exit code: $set_exit"
+        if [ $set_exit -eq 0 ] && pvesm status | grep "^$nfs_storage" | grep -q "backup"; then
+            BACKUP_STORAGE="$nfs_storage"
+            debug_log "Successfully configured $nfs_storage for backups"
             return 0
         fi
-        debug_log "Failed to configure mrx-nas for backups"
+        debug_log "Failed to configure $nfs_storage for backups"
     fi
 
-    # Try creating a ZFS dataset on rpool
-    debug_log "Attempting to create ZFS dataset rpool/backup"
-    zfs create rpool/backup 2>/dev/null
-    local zfs_create_exit=$?
-    debug_log "zfs create exit code: $zfs_create_exit"
-    if [ $zfs_create_exit -eq 0 ]; then
-        debug_log "Configuring ZFS dataset as directory storage"
-        pvesm add dir zfs-backup --path /rpool/backup --content backup --is_mountpoint yes 2>/dev/null
-        local pvesm_add_exit=$?
-        debug_log "pvesm add zfs-backup exit code: $pvesm_add_exit"
-        if [ $pvesm_add_exit -eq 0 ]; then
-            BACKUP_STORAGE="zfs-backup"
-            debug_log "Successfully configured zfs-backup for backups"
-            return 0
+    # Try creating a ZFS dataset
+    local timestamp=$(date +%s)
+    local backup_dataset="backup-$timestamp"
+    local zfs_pool=$(zfs list -H -o name 2>/dev/null | grep -v '/backup' | head -n 1)
+    debug_log "Selected ZFS pool for backup dataset: $zfs_pool"
+    if [ -n "$zfs_pool" ]; then
+        local full_dataset="$zfs_pool/$backup_dataset"
+        debug_log "Attempting to create ZFS dataset $full_dataset"
+        zfs create "$full_dataset" 2>/dev/null
+        local zfs_create_exit=$?
+        debug_log "zfs create exit code: $zfs_create_exit"
+        if [ $zfs_create_exit -eq 0 ]; then
+            local backup_storage_name="backup-$timestamp"
+            debug_log "Configuring ZFS dataset as directory storage: $backup_storage_name"
+            pvesm add dir "$backup_storage_name" --path "/$full_dataset" --content backup --is_mountpoint yes 2>/dev/null
+            local pvesm_add_exit=$?
+            debug_log "pvesm add $backup_storage_name exit code: $pvesm_add_exit"
+            if [ $pvesm_add_exit -eq 0 ]; then
+                BACKUP_STORAGE="$backup_storage_name"
+                debug_log "Successfully configured $backup_storage_name for backups"
+                return 0
+            fi
+            debug_log "Failed to configure $backup_storage_name storage"
+            zfs destroy "$full_dataset" 2>/dev/null
         fi
-        debug_log "Failed to configure zfs-backup storage"
-        zfs destroy rpool/backup 2>/dev/null
+        debug_log "Failed to create ZFS dataset $full_dataset"
     fi
 
     # Try local storage
