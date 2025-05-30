@@ -1,15 +1,15 @@
 #!/bin/bash
-# Script to change the ID of a Proxmox LXC container (CT) or virtual machine (VM) using backup and restore
-# Uses whiptail to select the CT/VM and new ID
+# Script to change the CT ID of a Proxmox LXC container using backup and restore
+# Uses whiptail to select the current container and new CT ID
 # Automatically configures backup storage if none exists, using dynamic storage names
 # Checks disk space before backup and restore, using ZFS pool space to avoid subvolume quotas
 # Validates ZFS dataset mountpoints for dir storages
-# Skips stop if CT/VM is already stopped, dynamically finds or creates backup
-# Delays deletion of old CT/VM until new one is confirmed running
+# Skips stop if container is already stopped, dynamically finds or creates backup
+# Delays deletion of old container until new container is confirmed running
 # Supports --verbose flag for detailed debug logging
 
 # Initialize logging
-LOG_FILE="/var/log/change_ct_vm_id.log"
+LOG_FILE="/var/log/change_ct_id.log"
 VERBOSE=0
 
 # Check for --verbose flag
@@ -47,120 +47,98 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 # Check if Proxmox tools are available
-debug_log "Checking Proxmox tools: pct=$(command -v pct), vzdump=$(command -v vzdump), pvesm=$(command -v pvesm), qm=$(command -v qm)"
-if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1 || ! command -v pvesm >/dev/null 2>&1 || ! command -v qm >/dev/null 2>&1; then
-    log "Error: Proxmox tools (pct, vzdump, pvesm, or qm) not found. Is this a Proxmox system?"
+debug_log "Checking Proxmox tools: pct=$(command -v pct), vzdump=$(command -v vzdump), pvesm=$(command -v pvesm)"
+if ! command -v pct >/dev/null 2>&1 || ! command -v vzdump >/dev/null 2>&1 || ! command -v pvesm >/dev/null 2>&1; then
+    log "Error: Proxmox tools (pct, vzdump, or pvesm) not found. Is this a Proxmox system?"
     exit 2
 fi
 
-# Get list of CTs and VMs for whiptail menu
-debug_log "Fetching CT list with 'pct list'"
-CT_LIST=$(pct list | tail -n +2 | awk '{print "CT " $1 " [" $2 "] " $3}')
-debug_log "Fetching VM list with 'qm list'"
-VM_LIST=$(qm list | tail -n +2 | awk '{print "VM " $1 " [" $3 "] " $2}')
-if [ -z "$CT_LIST" ] && [ -z "$VM_LIST" ]; then
-    log "Error: No containers or virtual machines found on this system."
+# Get list of containers for whiptail menu
+debug_log "Fetching container list with 'pct list'"
+CONTAINERS=$(pct list | tail -n +2 | awk '{print $1 " " $2 " " $3}')
+if [ -z "$CONTAINERS" ]; then
+    log "Error: No containers found on this system."
     exit 1
 fi
-debug_log "Found CTs: $(echo "$CT_LIST" | wc -l), VMs: $(echo "$VM_LIST" | wc -l)"
+debug_log "Found containers: $(echo "$CONTAINERS" | wc -l) entries"
 
 # Build whiptail menu options
 MENU_OPTIONS=()
 while read -r line; do
-    if [ -n "$line" ]; then
-        ID=$(echo "$line" | awk '{print $2}')
-        DESC=$(echo "$line" | cut -d' ' -f3-)
-        MENU_OPTIONS+=("$ID" "$line")
-    fi
-done <<< "$CT_LIST
-$VM_LIST"
+    CT_ID=$(echo "$line" | awk '{print $1}')
+    STATUS=$(echo "$line" | awk '{print $2}')
+    HOSTNAME=$(echo "$line" | awk '{print $3}')
+    MENU_OPTIONS+=("$CT_ID" "[$STATUS] $HOSTNAME")
+    debug_log "Added menu option: CT_ID=$CT_ID, Status=$STATUS, Hostname=$HOSTNAME"
+done <<< "$CONTAINERS"
 
-# Display whiptail menu to select CT or VM
-debug_log "Displaying whiptail menu for CT/VM selection"
-SELECTED_ITEM=$(whiptail --title "Select Container or VM" --menu "Choose a container or VM to change its ID:" 20 80 12 \
+# Display whiptail menu to select current CT ID
+debug_log "Displaying whiptail menu for container selection"
+CURRENT_CT_ID=$(whiptail --title "Select Container" --menu "Choose a container to change its ID:" 15 60 6 \
     "${MENU_OPTIONS[@]}" 3>&1 1>&2 2>&3)
 if [ $? -ne 0 ]; then
     log "Menu cancelled."
     exit 1
 fi
-CURRENT_ID="$SELECTED_ITEM"
-ENTITY_TYPE=$(echo "$CT_LIST
-$VM_LIST" | grep "^.* $CURRENT_ID " | awk '{print $1}')
-log "Selected $ENTITY_TYPE: $CURRENT_ID"
-debug_log "User selected $ENTITY_TYPE: CURRENT_ID=$CURRENT_ID"
+log "Selected container: $CURRENT_CT_ID"
+debug_log "User selected container: CURRENT_CT_ID=$CURRENT_CT_ID"
 
-# Check if the selected CT/VM exists
-debug_log "Verifying $ENTITY_TYPE $CURRENT_ID exists"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    if ! pct status "$CURRENT_ID" >/dev/null 2>&1; then
-        log "Error: Container with ID $CURRENT_ID does not exist."
-        exit 1
-    fi
-else
-    if ! qm status "$CURRENT_ID" >/dev/null 2>&1; then
-        log "Error: Virtual machine with ID $CURRENT_ID does not exist."
-        exit 1
-    fi
+# Check if the selected CT ID exists
+debug_log "Verifying container $CURRENT_CT_ID exists with 'pct status'"
+if ! pct status "$CURRENT_CT_ID" >/dev/null 2>&1; then
+    log "Error: Container with ID $CURRENT_CT_ID does not exist."
+    exit 1
 fi
 
-# Prompt for new ID using whiptail input box
-debug_log "Prompting for new $ENTITY_TYPE ID with whiptail inputbox"
-NEW_ID=$(whiptail --title "Enter New $ENTITY_TYPE ID" --inputbox "Enter the new ID for $ENTITY_TYPE $CURRENT_ID:" 10 40 3>&1 1>&2 2>&3)
+# Prompt for new CT ID using whiptail input box
+debug_log "Prompting for new CT ID with whiptail inputbox"
+NEW_CT_ID=$(whiptail --title "Enter New Container ID" --inputbox "Enter the new ID for container $CURRENT_CT_ID:" 10 40 3>&1 1>&2 2>&3)
 if [ $? -ne 0 ]; then
     log "Input cancelled."
     exit 1
 fi
-debug_log "User entered new $ENTITY_TYPE ID: NEW_ID=$NEW_ID"
+debug_log "User entered new CT ID: NEW_CT_ID=$NEW_CT_ID"
 
-# Validate new ID
-if [ -z "$NEW_ID" ]; then
-    log "Error: New $ENTITY_TYPE ID cannot be empty."
+# Validate new CT ID
+if [ -z "$NEW_CT_ID" ]; then
+    log "Error: New CT ID cannot be empty."
     exit 1
 fi
-if ! [[ "$NEW_ID" =~ ^[0-9]+$ ]]; then
-    log "Error: New $ENTITY_TYPE ID must be a positive integer."
+if ! [[ "$NEW_CT_ID" =~ ^[0-9]+$ ]]; then
+    log "Error: New CT ID must be a positive integer."
     exit 1
 fi
-debug_log "Validating new $ENTITY_TYPE ID: Checking if $NEW_ID is already in use"
-if pct status "$NEW_ID" >/dev/null 2>&1 || qm status "$NEW_ID" >/dev/null 2>&1; then
-    log "Error: $ENTITY_TYPE with ID $NEW_ID already exists."
+debug_log "Validating new CT ID: Checking if $NEW_CT_ID is already in use"
+if pct status "$NEW_CT_ID" >/dev/null 2>&1; then
+    log "Error: Container with ID $NEW_CT_ID already exists."
     exit 1
 fi
-log "New $ENTITY_TYPE ID: $NEW_ID"
+log "New container ID: $NEW_CT_ID"
 
-# Detect configuration
-debug_log "Reading config file for $ENTITY_TYPE $CURRENT_ID"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    CONFIG_FILE="/etc/pve/lxc/$CURRENT_ID.conf"
-else
-    CONFIG_FILE="/etc/pve/qemu-server/$CURRENT_ID.conf"
-fi
+# Detect container configuration
+debug_log "Reading config file for CT $CURRENT_CT_ID: /etc/pve/lxc/$CURRENT_CT_ID.conf"
+CONFIG_FILE="/etc/pve/lxc/$CURRENT_CT_ID.conf"
 if [ ! -f "$CONFIG_FILE" ]; then
     log "Error: Configuration file $CONFIG_FILE not found."
     exit 2
 fi
 
-# Extract storage
+# Extract storage from rootfs line
 debug_log "Extracting storage from $CONFIG_FILE"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
-else
-    # For VMs, get the first disk storage (e.g., scsi0, ide0)
-    CONTAINER_STORAGE=$(grep -E "^(scsi|ide|sata|virtio)[0-9]+:" "$CONFIG_FILE" | head -n 1 | awk -F: '{print $2}' | cut -d',' -f1 | awk '{print $1}')
-fi
+CONTAINER_STORAGE=$(grep '^rootfs:' "$CONFIG_FILE" | awk -F: '{print $2}' | awk '{print $1}')
 if [ -z "$CONTAINER_STORAGE" ]; then
-    log "Error: Could not detect storage from $CONFIG_FILE."
+    log "Error: Could not detect container storage from $CONFIG_FILE."
     exit 2
 fi
-debug_log "Detected storage: $CONTAINER_STORAGE"
+debug_log "Detected container storage: $CONTAINER_STORAGE"
 
-# Verify storage exists
+# Verify container storage exists
 debug_log "Verifying storage $CONTAINER_STORAGE with 'pvesm status'"
 if ! pvesm status | grep -q "^$CONTAINER_STORAGE"; then
-    log "Error: Storage '$CONTAINER_STORAGE' not found."
+    log "Error: Container storage '$CONTAINER_STORAGE' not found."
     exit 2
 fi
-log "Detected storage: $CONTAINER_STORAGE"
+log "Detected container storage: $CONTAINER_STORAGE"
 
 # Function to check available disk space (in bytes)
 check_disk_space() {
@@ -203,7 +181,7 @@ check_disk_space() {
             debug_log "Running: pvesm list $storage"
             local pvesm_list_output=$(pvesm list "$storage" 2>/dev/null)
             debug_log "pvesm list output: $pvesm_list_output"
-            local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_ID-disk-" | awk '{print $1}' | sed "s|^$storage:||")
+            local zfs_subvol=$(echo "$pvesm_list_output" | grep "subvol-$CURRENT_CT_ID-disk-" | awk '{print $1}' | sed "s|^$storage:||")
             if [ -n "$zfs_subvol" ]; then
                 local full_subvol="$storage/$zfs_subvol"
                 debug_log "Found ZFS subvolume: $full_subvol"
@@ -221,7 +199,7 @@ check_disk_space() {
                     available_space=""
                 fi
             else
-                debug_log "No ZFS subvolume found for $ENTITY_TYPE $CURRENT_ID"
+                debug_log "No ZFS subvolume found for CT $CURRENT_CT_ID"
             fi
         fi
         if [ -z "$available_space" ]; then
@@ -374,27 +352,22 @@ configure_backup_storage() {
     exit 2
 }
 
-# Estimate disk size (try actual usage first, then config, then default)
-debug_log "Estimating disk size for $ENTITY_TYPE $CURRENT_ID"
-CONTAINER_DISK=$(pvesm list "$CONTAINER_STORAGE" | grep -E "(lxc|vm)/$CURRENT_ID/" | awk '{print $2}' | head -n 1)
+# Estimate container size (try actual usage first, then config, then default)
+debug_log "Estimating container size for CT $CURRENT_CT_ID"
+CONTAINER_DISK=$(pvesm list "$CONTAINER_STORAGE" | grep "lxc/$CURRENT_CT_ID/" | awk '{print $2}' | head -n 1)
 if [ -n "$CONTAINER_DISK" ]; then
     REQUIRED_SPACE=$CONTAINER_DISK
-    debug_log "Estimated disk size from pvesm: $((REQUIRED_SPACE / 1024 / 1024)) MB"
+    debug_log "Estimated container size from pvesm: $((REQUIRED_SPACE / 1024 / 1024)) MB"
 else
-    if [ "$ENTITY_TYPE" = "CT" ]; then
-        CONTAINER_SIZE=$(grep '^rootfs:' "$CONFIG_FILE" | grep -oP 'size=\K[^,]+' | head -n 1)
-    else
-        # Sum all disk sizes for VMs (e.g., size=32G)
-        CONTAINER_SIZE=$(grep -E '^(scsi|ide|sata|virtio)[0-9]+:' "$CONFIG_FILE" | grep -oP 'size=\K[0-9]+[GM]' | awk '{sum += ($1 ~ /G/ ? $1*1024 : $1)} END {print sum}')
-    fi
+    CONTAINER_SIZE=$(grep '^rootfs:' "$CONFIG_FILE" | grep -oP 'size=\K[^,]+' | head -n 1)
     if [ -n "$CONTAINER_SIZE" ]; then
         case "$CONTAINER_SIZE" in
             *G) REQUIRED_SPACE=$(echo "$CONTAINER_SIZE" | tr -d 'G'); REQUIRED_SPACE=$((REQUIRED_SPACE * 1024 * 1024 * 1024)) ;;
             *M) REQUIRED_SPACE=$(echo "$CONTAINER_SIZE" | tr -d 'M'); REQUIRED_SPACE=$((REQUIRED_SPACE * 1024 * 1024)) ;;
             *K) REQUIRED_SPACE=$(echo "$CONTAINER_SIZE" | tr -d 'K'); REQUIRED_SPACE=$((REQUIRED_SPACE * 1024)) ;;
-            *) REQUIRED_SPACE=$((CONTAINER_SIZE * 1024 * 1024)) ;; # Assume MB if no unit
+            *) REQUIRED_SPACE=$((CONTAINER_SIZE * 1024 * 1024 * 1024)) ;;
         esac
-        debug_log "Estimated disk size from config: $((REQUIRED_SPACE / 1024 / 1024)) MB"
+        debug_log "Estimated container size from config: $((REQUIRED_SPACE / 1024 / 1024)) MB"
     else
         REQUIRED_SPACE=$((10 * 1024 * 1024 * 1024)) # Default 10GB
         debug_log "Warning: No size detected, using default 10GB"
@@ -414,57 +387,35 @@ configure_backup_storage
 debug_log "Checking disk space for backup storage $BACKUP_STORAGE"
 check_disk_space "$BACKUP_STORAGE" "$REQUIRED_SPACE"
 
-# Check if the CT is unprivileged (only for CTs)
+# Check if the container is unprivileged
+debug_log "Checking if CT $CURRENT_CT_ID is unprivileged"
 UNPRIVILEGED=""
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    debug_log "Checking if CT $CURRENT_ID is unprivileged"
-    if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
-        UNPRIVILEGED="--unprivileged"
-        log "Detected unprivileged container. Will use --unprivileged flag for restore."
-        debug_log "Unprivileged container detected, setting UNPRIVILEGED=$UNPRIVILEGED"
-    fi
+if grep -q "unprivileged: 1" "$CONFIG_FILE"; then
+    UNPRIVILEGED="--unprivileged"
+    log "Detected unprivileged container. Will use --unprivileged flag for restore."
+    debug_log "Unprivileged container detected, setting UNPRIVILEGED=$UNPRIVILEGED"
 fi
 
-# Stop the CT/VM if running
-debug_log "Checking status of $ENTITY_TYPE $CURRENT_ID"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    STATUS=$(pct status "$CURRENT_ID" 2>/dev/null)
-    if echo "$STATUS" | grep -q "status: running"; then
-        log "Stopping container $CURRENT_ID..."
-        debug_log "Attempting to stop CT $CURRENT_ID"
-        pct stop "$CURRENT_ID" || {
-            log "Error: Failed to stop container $CURRENT_ID."
-            exit 2
-        }
-        debug_log "Stopped CT $CURRENT_ID"
-    else
-        log "Container $CURRENT_ID is already stopped (status: $STATUS)."
-        debug_log "CT $CURRENT_ID already stopped: $STATUS"
-    fi
+# Stop the container if running
+debug_log "Checking status of CT $CURRENT_CT_ID"
+STATUS=$(pct status "$CURRENT_CT_ID" 2>/dev/null)
+if echo "$STATUS" | grep -q "status: running"; then
+    log "Stopping container $CURRENT_CT_ID..."
+    debug_log "Attempting to stop CT $CURRENT_CT_ID"
+    pct stop "$CURRENT_CT_ID" || {
+        log "Error: Failed to stop container $CURRENT_CT_ID."
+        exit 2
+    }
+    debug_log "Stopped CT $CURRENT_CT_ID"
 else
-    STATUS=$(qm status "$CURRENT_ID" 2>/dev/null)
-    if echo "$STATUS" | grep -q "status: running"; then
-        log "Stopping virtual machine $CURRENT_ID..."
-        debug_log "Attempting to stop VM $CURRENT_ID"
-        qm stop "$CURRENT_ID" || {
-            log "Error: Failed to stop virtual machine $CURRENT_ID."
-            exit 2
-        }
-        debug_log "Stopped VM $CURRENT_ID"
-    else
-        log "Virtual machine $CURRENT_ID is already stopped (status: $STATUS)."
-        debug_log "VM $CURRENT_ID already stopped: $STATUS"
-    fi
+    log "Container $CURRENT_CT_ID is already stopped (status: $STATUS)."
+    debug_log "CT $CURRENT_CT_ID already stopped: $STATUS"
 fi
 
 # Check for existing backup or create a new one
-log "Searching for existing backup for $ENTITY_TYPE $CURRENT_ID..."
+log "Searching for existing backup for CT $CURRENT_CT_ID..."
 debug_log "Searching backups in $BACKUP_STORAGE with 'pvesm list'"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    BACKUP_FILE=$(pvesm list "$BACKUP_STORAGE" | grep "vzdump-lxc-$CURRENT_ID-" | awk '{print $1}' | head -n 1)
-else
-    BACKUP_FILE=$(pvesm list "$BACKUP_STORAGE" | grep "vzdump-qemu-$CURRENT_ID-" | awk '{print $1}' | head -n 1)
-fi
+BACKUP_FILE=$(pvesm list "$BACKUP_STORAGE" | grep "vzdump-lxc-$CURRENT_CT_ID-" | awk '{print $1}' | head -n 1)
 if [ -n "$BACKUP_FILE" ]; then
     debug_log "Found backup file entry: $BACKUP_FILE"
     BACKUP_PATH=$(pvesm path "$BACKUP_FILE")
@@ -478,12 +429,12 @@ if [ -n "$BACKUP_FILE" ]; then
 fi
 if [ -z "$BACKUP_FILE" ]; then
     log "No existing backup found. Creating new backup on $BACKUP_STORAGE..."
-    debug_log "Creating new backup with vzdump for $ENTITY_TYPE $CURRENT_ID"
-    VZDUMP_OUTPUT=$(vzdump "$CURRENT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
+    debug_log "Creating new backup with vzdump for CT $CURRENT_CT_ID"
+    VZDUMP_OUTPUT=$(vzdump "$CURRENT_CT_ID" --compress zstd --storage "$BACKUP_STORAGE" --mode snapshot 2>&1)
     VZDUMP_STATUS=$?
     debug_log "vzdump exit status: $VZDUMP_STATUS"
     if [ $VZDUMP_STATUS -ne 0 ]; then
-        log "Error: Backup failed for $ENTITY_TYPE $CURRENT_ID."
+        log "Error: Backup failed for container $CURRENT_CT_ID."
         log "$VZDUMP_OUTPUT"
         debug_log "Backup failed: $VZDUMP_OUTPUT"
         exit 2
@@ -502,86 +453,50 @@ fi
 debug_log "Checking disk space for restore on $CONTAINER_STORAGE"
 check_disk_space "$CONTAINER_STORAGE" "$REQUIRED_SPACE"
 
-# Restore the CT/VM with the new ID
-log "Restoring $ENTITY_TYPE as $NEW_ID..."
-debug_log "Restoring $ENTITY_TYPE $NEW_ID from $BACKUP_FILE"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    pct restore "$NEW_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVILEGED || {
-        log "Error: Failed to restore container as $NEW_ID. Old container $CURRENT_ID preserved."
-        debug_log "Restore failed for CT $NEW_ID"
-        exit 2
-    }
-else
-    qmrestore "$BACKUP_FILE" "$NEW_ID" --storage "$CONTAINER_STORAGE" || {
-        log "Error: Failed to restore virtual machine as $NEW_ID. Old virtual machine $CURRENT_ID preserved."
-        debug_log "Restore failed for VM $NEW_ID"
-        exit 2
-    }
-fi
-debug_log "Restored $ENTITY_TYPE $NEW_ID"
+# Restore the container with the new CT ID
+log "Restoring container as $NEW_CT_ID..."
+debug_log "Restoring CT $NEW_CT_ID from $BACKUP_FILE"
+pct restore "$NEW_CT_ID" "$BACKUP_FILE" --storage "$CONTAINER_STORAGE" $UNPRIVILEGED || {
+    log "Error: Failed to restore container as $NEW_CT_ID. Old container $CURRENT_CT_ID preserved."
+    debug_log "Restore failed for CT $NEW_CT_ID"
+    exit 2
+}
+debug_log "Restored CT $NEW_CT_ID"
 
-# Start the new CT/VM
-log "Starting $ENTITY_TYPE $NEW_ID..."
-debug_log "Starting $ENTITY_TYPE $NEW_ID"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    pct start "$NEW_ID" || {
-        log "Error: Failed to start container $NEW_ID. Old container $CURRENT_ID preserved."
-        debug_log "Start failed for CT $NEW_ID"
-        exit 2
-    }
-else
-    qm start "$NEW_ID" || {
-        log "Error: Failed to start virtual machine $NEW_ID. Old virtual machine $CURRENT_ID preserved."
-        debug_log "Start failed for VM $NEW_ID"
-        exit 2
-    }
-fi
-debug_log "Started $ENTITY_TYPE $NEW_ID"
+# Start the new container
+log "Starting container $NEW_CT_ID..."
+debug_log "Starting CT $NEW_CT_ID"
+pct start "$NEW_CT_ID" || {
+    log "Error: Failed to start container as $NEW_CT_ID. Old container $CURRENT_CT_ID preserved."
+    debug_log "Start failed for CT $NEW_CT_ID"
+    exit 2
+}
+debug_log "Started CT $NEW_CT_ID"
 
-# Verify the CT/VM is running
-debug_log "Verifying $ENTITY_TYPE $NEW_ID is running"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    if pct status "$NEW_ID" | grep -q "status: running"; then
-        log "New container $NEW_ID is running."
-        debug_log "Verified CT $NEW_ID is running"
-    else
-        log "Error: Container $NEW_ID restored but not running. Old container $CURRENT_ID preserved."
-        log "Check logs with 'journalctl -u pve*'."
-        debug_log "CT $NEW_ID not running"
-        exit 2
-    fi
+# Verify the container is running
+debug_log "Verifying CT $NEW_CT_ID is running"
+if pct status "$NEW_CT_ID" | grep -q "status: running"; then
+    log "New container $NEW_CT_ID is running."
+    debug_log "Verified CT $NEW_CT_ID is running"
 else
-    if qm status "$NEW_ID" | grep -q "status: running"; then
-        log "New virtual machine $NEW_ID is running."
-        debug_log "Verified VM $NEW_ID is running"
-    else
-        log "Error: Virtual machine $NEW_ID restored but not running. Old virtual machine $CURRENT_ID preserved."
-        log "Check logs with 'journalctl -u pve*'."
-        debug_log "VM $NEW_ID not running"
-        exit 2
-    fi
+    log "Error: Container $NEW_CT_ID restored but not running. Old container $CURRENT_CT_ID preserved."
+    log "Check logs with 'journalctl -u pve*'."
+    debug_log "CT $NEW_CT_ID not running"
+    exit 2
 fi
 
-# Delete the original CT/VM
-log "Deleting original $ENTITY_TYPE $CURRENT_ID..."
-debug_log "Deleting $ENTITY_TYPE $CURRENT_ID"
-if [ "$ENTITY_TYPE" = "CT" ]; then
-    pct destroy "$CURRENT_ID" || {
-        log "Warning: Failed to delete original container $CURRENT_ID. New container $NEW_ID is running."
-        debug_log "Failed to delete CT $CURRENT_ID"
-        exit 2
-    }
-else
-    qm destroy "$CURRENT_ID" || {
-        log "Warning: Failed to delete original virtual machine $CURRENT_ID. New virtual machine $NEW_ID is running."
-        debug_log "Failed to delete VM $CURRENT_ID"
-        exit 2
-    }
-fi
-debug_log "Deleted $ENTITY_TYPE $CURRENT_ID"
+# Delete the original container (only after new container is confirmed running)
+log "Deleting original container $CURRENT_CT_ID..."
+debug_log "Deleting CT $CURRENT_CT_ID"
+pct destroy "$CURRENT_CT_ID" || {
+    log "Warning: Failed to delete original container $CURRENT_CT_ID. New container $NEW_CT_ID is running."
+    debug_log "Failed to delete CT $CURRENT_CT_ID"
+    exit 2
+}
+debug_log "Deleted CT $CURRENT_CT_ID"
 
 # Final success message
-log "Success: $ENTITY_TYPE ID changed from $CURRENT_ID to $NEW_ID and is running."
+log "Success: Container ID changed from $CURRENT_CT_ID to $NEW_CT_ID and is running."
 debug_log "Operation completed successfully"
 
 # Optional cleanup (commented out)
