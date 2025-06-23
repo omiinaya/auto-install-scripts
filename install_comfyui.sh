@@ -30,13 +30,38 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
+# Function to ask yes/no questions and keep asking until valid response
+ask_yes_no() {
+    local prompt="$1"
+    local default="$2"  # "y" or "n"
+    local response
+    
+    while true; do
+        if [ "$default" = "y" ]; then
+            read -p "$prompt (Y/n): " -n 1 -r response
+        else
+            read -p "$prompt (y/N): " -n 1 -r response
+        fi
+        echo
+        
+        # Handle empty response (just pressed Enter)
+        if [ -z "$response" ]; then
+            response="$default"
+        fi
+        
+        case "$response" in
+            [Yy]* ) return 0;;
+            [Nn]* ) return 1;;
+            * ) warn "Please answer yes (y) or no (n).";;
+        esac
+    done
+}
+
 # Check if running as root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
         warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        read -p "Do you want to continue anyway? (y/N): " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        if ! ask_yes_no "Do you want to continue anyway?" "n"; then
             exit 1
         fi
     fi
@@ -134,9 +159,7 @@ create_venv() {
     
     if [ -d "$VENV_DIR" ]; then
         warn "Virtual environment already exists at $VENV_DIR"
-        read -p "Do you want to remove it and create a new one? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if ask_yes_no "Do you want to remove it and create a new one?" "n"; then
             rm -rf "$VENV_DIR"
         else
             info "Using existing virtual environment"
@@ -183,9 +206,7 @@ install_comfyui() {
     
     if [ -d "$COMFY_DIR" ]; then
         warn "ComfyUI directory already exists at $COMFY_DIR"
-        read -p "Do you want to remove it and install fresh? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if ask_yes_no "Do you want to remove it and install fresh?" "n"; then
             rm -rf "$COMFY_DIR"
         else
             info "Using existing ComfyUI installation"
@@ -282,23 +303,30 @@ echo
 comfy launch "$@"
 EOF
 
-    chmod +x "$LAUNCHER_SCRIPT"
-    
-    log "Launcher script created at $LAUNCHER_SCRIPT"
+    # Make the launcher script executable
+    if chmod +x "$LAUNCHER_SCRIPT"; then
+        log "Launcher script created and made executable at $LAUNCHER_SCRIPT"
+    else
+        warn "Failed to make launcher script executable. You may need to run: chmod +x $LAUNCHER_SCRIPT"
+    fi
 }
 
 # Create systemd service (optional)
 create_systemd_service() {
     log "Creating systemd service for ComfyUI..."
     
-    read -p "Do you want to create a systemd service to run ComfyUI automatically? (y/N): " -n 1 -r
-    echo
-    
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if ! ask_yes_no "Do you want to create a systemd service to run ComfyUI automatically?" "n"; then
         return 0
     fi
     
     SERVICE_FILE="/etc/systemd/system/comfyui.service"
+    
+    # Get absolute paths (resolve $HOME properly)
+    CURRENT_USER=$(whoami)
+    USER_HOME=$(eval echo ~$CURRENT_USER)
+    
+    info "Creating systemd service for user: $CURRENT_USER"
+    info "Using home directory: $USER_HOME"
     
     sudo tee "$SERVICE_FILE" > /dev/null << EOF
 [Unit]
@@ -307,12 +335,15 @@ After=network.target
 
 [Service]
 Type=simple
-User=$USER
-WorkingDirectory=$HOME/comfy
-Environment=PATH=$HOME/comfy-env/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$HOME/comfy-env/bin/comfy launch --listen 0.0.0.0
+User=$CURRENT_USER
+Group=$CURRENT_USER
+WorkingDirectory=$USER_HOME/comfy
+Environment=PATH=$USER_HOME/comfy-env/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=$USER_HOME/comfy-env/bin/comfy launch --listen 0.0.0.0
 Restart=always
 RestartSec=10
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -402,9 +433,7 @@ main() {
     info "Virtual environment: $HOME/comfy-env"
     echo
     
-    read -p "Do you want to continue with the installation? (y/N): " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if ! ask_yes_no "Do you want to continue with the installation?" "n"; then
         info "Installation cancelled."
         exit 0
     fi
