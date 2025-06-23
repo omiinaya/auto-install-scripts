@@ -90,11 +90,43 @@ verify_installation() {
         error "ComfyUI virtual environment not found at $USER_HOME/comfy-env"
     fi
     
-    if [ ! -f "$USER_HOME/comfy-env/bin/comfy" ]; then
-        error "Comfy CLI not found at $USER_HOME/comfy-env/bin/comfy"
+    if [ ! -f "$USER_HOME/launch_comfyui.sh" ]; then
+        error "Launch script not found at $USER_HOME/launch_comfyui.sh"
+    fi
+    
+    if [ ! -x "$USER_HOME/launch_comfyui.sh" ]; then
+        warn "Launch script is not executable, fixing..."
+        chmod +x "$USER_HOME/launch_comfyui.sh"
     fi
     
     log "ComfyUI installation verified"
+}
+
+# Fix launcher script if it has incorrect argument format
+fix_launcher_script() {
+    log "Checking launcher script format..."
+    
+    CURRENT_USER=$(whoami)
+    USER_HOME=$(eval echo ~$CURRENT_USER)
+    LAUNCHER_SCRIPT="$USER_HOME/launch_comfyui.sh"
+    
+    # Check if launcher script has the old incorrect format
+    if grep -q "comfy launch --listen" "$LAUNCHER_SCRIPT" 2>/dev/null; then
+        warn "Found incorrect argument format in launcher script, fixing..."
+        
+        # Backup the original
+        cp "$LAUNCHER_SCRIPT" "$LAUNCHER_SCRIPT.backup"
+        
+        # Fix the argument format
+        sed -i 's/comfy launch --listen 0\.0\.0\.0/comfy launch -- --listen 0.0.0.0/g' "$LAUNCHER_SCRIPT"
+        
+        log "Launcher script argument format fixed"
+        info "Backup saved as: $LAUNCHER_SCRIPT.backup"
+    elif grep -q "comfy launch -- --listen" "$LAUNCHER_SCRIPT" 2>/dev/null; then
+        log "Launcher script already has correct argument format"
+    else
+        info "Launcher script format check completed"
+    fi
 }
 
 # Create new service file
@@ -110,6 +142,12 @@ create_service() {
     info "Creating systemd service for user: $CURRENT_USER"
     info "Using home directory: $USER_HOME"
     
+    # Check if we're fixing a root installation
+    if [[ "$CURRENT_USER" == "root" ]]; then
+        warn "You're running as root. The service will use root paths."
+        info "For better security, consider reinstalling ComfyUI as a regular user."
+    fi
+    
     sudo tee "$SERVICE_FILE" > /dev/null << EOF
 [Unit]
 Description=ComfyUI Service
@@ -119,19 +157,20 @@ After=network.target
 Type=simple
 User=$CURRENT_USER
 Group=$CURRENT_USER
-WorkingDirectory=$USER_HOME/comfy
-Environment=PATH=$USER_HOME/comfy-env/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$USER_HOME/comfy-env/bin/comfy launch --listen 0.0.0.0
+WorkingDirectory=$USER_HOME
+ExecStart=$USER_HOME/launch_comfyui.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
+SyslogIdentifier=comfyui
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
     log "New systemd service file created"
+    info "Service will execute: $USER_HOME/launch_comfyui.sh"
 }
 
 # Reload and start service
@@ -159,9 +198,14 @@ reload_service() {
         log "ComfyUI service is running successfully!"
         info "You can check the status with: sudo systemctl status comfyui"
         info "You can view logs with: sudo journalctl -u comfyui -f"
-        info "ComfyUI should be accessible at: http://localhost:8188"
+        info "ComfyUI should be accessible at:"
+        echo "    Local: http://localhost:8188"
+        echo "    Network: http://$(hostname -I | awk '{print $1}'):8188"
     else
-        warn "Service may not be running properly. Check status with: sudo systemctl status comfyui"
+        warn "Service may not be running properly."
+        info "Check status with: sudo systemctl status comfyui"
+        info "Check logs with: sudo journalctl -u comfyui -n 20"
+        info "Try running the launcher manually to test: ~/launch_comfyui.sh"
     fi
 }
 
@@ -182,6 +226,7 @@ main() {
     
     check_sudo
     verify_installation
+    fix_launcher_script
     stop_service
     create_service
     reload_service
@@ -198,7 +243,9 @@ main() {
     echo "  sudo systemctl status comfyui    : Check service status"
     echo "  sudo journalctl -u comfyui -f    : View service logs"
     echo
-    info "ComfyUI should be accessible at: http://localhost:8188"
+    info "ComfyUI should be accessible at:"
+    echo "  Local: http://localhost:8188"
+    echo "  Network: http://your-server-ip:8188"
 }
 
 # Run main function

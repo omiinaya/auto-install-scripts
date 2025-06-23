@@ -93,14 +93,11 @@ sudo systemctl start comfyui
 
 ### Accessing ComfyUI
 - **Local access**: http://localhost:8188
-- **Network access**: http://your-server-ip:8188 (use `--listen 0.0.0.0` option)
+- **Network access**: http://your-server-ip:8188 (enabled by default)
 
 ### Common Launch Options
 
 ```bash
-# Run on all network interfaces (accessible from other machines)
-~/launch_comfyui.sh -- --listen 0.0.0.0
-
 # Use different port
 ~/launch_comfyui.sh -- --port 8080
 
@@ -109,6 +106,9 @@ sudo systemctl start comfyui
 
 # CPU-only mode (if GPU issues)
 ~/launch_comfyui.sh -- --cpu
+
+# Restrict to local access only (disable network access)
+~/launch_comfyui.sh -- --listen 127.0.0.1
 
 # Background mode
 source ~/comfy-env/bin/activate
@@ -175,9 +175,9 @@ For low VRAM GPUs:
 Ensure your user has sudo privileges and can write to the home directory.
 
 ### Network Access Issues
-To access ComfyUI from other machines:
+Network access is enabled by default. To disable it and restrict to local access only:
 ```bash
-~/launch_comfyui.sh -- --listen 0.0.0.0
+~/launch_comfyui.sh -- --listen 127.0.0.1
 ```
 
 ## Updating ComfyUI

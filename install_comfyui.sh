@@ -294,13 +294,15 @@ source "$VENV_DIR/bin/activate"
 # Change to ComfyUI directory
 cd "$COMFY_DIR"
 
-echo -e "${GREEN}Starting ComfyUI...${NC}"
-echo -e "${GREEN}Access ComfyUI at: http://localhost:8188${NC}"
+echo -e "${GREEN}Starting ComfyUI with network access...${NC}"
+echo -e "${GREEN}Access ComfyUI locally at: http://localhost:8188${NC}"
+echo -e "${GREEN}Access ComfyUI from network at: http://$(hostname -I | awk '{print $1}'):8188${NC}"
 echo -e "${GREEN}Press Ctrl+C to stop ComfyUI${NC}"
 echo
 
-# Launch ComfyUI with options
-comfy launch "$@"
+# Launch ComfyUI with network access by default
+# Use -- to pass arguments to the underlying ComfyUI process
+comfy launch -- --listen 0.0.0.0 "$@"
 EOF
 
     # Make the launcher script executable
@@ -337,9 +339,8 @@ After=network.target
 Type=simple
 User=$CURRENT_USER
 Group=$CURRENT_USER
-WorkingDirectory=$USER_HOME/comfy
-Environment=PATH=$USER_HOME/comfy-env/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=$USER_HOME/comfy-env/bin/comfy launch --listen 0.0.0.0
+WorkingDirectory=$USER_HOME
+ExecStart=$USER_HOME/launch_comfyui.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -394,16 +395,15 @@ print_instructions() {
     echo "     cd $HOME/comfy"
     echo "     comfy launch"
     echo
-    info "ComfyUI will be accessible at: http://localhost:8188"
-    echo
-    info "To run ComfyUI on all interfaces (accessible from other machines):"
-    echo "  $HOME/launch_comfyui.sh -- --listen 0.0.0.0"
+    info "ComfyUI will be accessible at:"
+    echo "  Local access: http://localhost:8188"
+    echo "  Network access: http://your-server-ip:8188"
     echo
     info "Common launch options:"
     echo "  --cpu                 : Use CPU only"
     echo "  --lowvram            : Low VRAM mode"
-    echo "  --listen 0.0.0.0     : Listen on all interfaces"
     echo "  --port 8080          : Use different port"
+    echo "  --listen 127.0.0.1   : Restrict to local access only"
     echo
     info "Useful commands:"
     echo "  comfy model download --url <model_url> --relative-path models/checkpoints"
