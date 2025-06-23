@@ -321,22 +321,98 @@ create_conda_env() {
     # Check if environment already exists
     if conda env list | grep -q "^$ENV_NAME "; then
         warn "Conda environment '$ENV_NAME' already exists"
-        if ask_yes_no "Do you want to remove it and create a new one?" "n"; then
+        if ask_yes_no "Do you want to remove it and create a new one?" "y"; then
             conda env remove -n "$ENV_NAME" -y
         else
             info "Using existing conda environment"
-            return 0
+            # Still verify it has the right Python version
+            source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+            ACTUAL_PYTHON_VERSION=$(python --version)
+            if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+                error "Existing environment has wrong Python version: $ACTUAL_PYTHON_VERSION"
+                error "Removing and recreating..."
+                conda deactivate
+                conda env remove -n "$ENV_NAME" -y
+            else
+                log "Existing environment verified with Python 3.10"
+                return 0
+            fi
         fi
     fi
     
-    # Create conda environment with Python 3.10 (specify exact version)
-    conda create -n "$ENV_NAME" python=3.10.12 -y
+    # Force Python 3.10 installation with multiple attempts
+    info "Creating conda environment with Python 3.10..."
     
-    # Activate environment and install conda packages
-    source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+    # Method 1: Try explicit Python 3.10
+    log "Attempt 1: Creating environment with python=3.10"
+    if conda create -n "$ENV_NAME" python=3.10 -y; then
+        source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+        ACTUAL_PYTHON_VERSION=$(python --version)
+        info "Created environment with: $ACTUAL_PYTHON_VERSION"
+        
+        if [[ "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+            log "Successfully created Python 3.10 environment"
+        else
+            warn "Wrong Python version, trying method 2..."
+            conda deactivate
+            conda env remove -n "$ENV_NAME" -y
+            
+            # Method 2: Try with explicit version constraint
+            log "Attempt 2: Creating environment with python=3.10.*"
+            if conda create -n "$ENV_NAME" python=3.10.* -y; then
+                source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+                ACTUAL_PYTHON_VERSION=$(python --version)
+                info "Created environment with: $ACTUAL_PYTHON_VERSION"
+                
+                if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+                    conda deactivate
+                    conda env remove -n "$ENV_NAME" -y
+                    
+                    # Method 3: Force with conda-forge channel
+                    log "Attempt 3: Creating environment with conda-forge channel"
+                    conda create -n "$ENV_NAME" -c conda-forge python=3.10 -y
+                    source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+                    ACTUAL_PYTHON_VERSION=$(python --version)
+                    info "Created environment with: $ACTUAL_PYTHON_VERSION"
+                    
+                    if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+                        error "All methods failed to create Python 3.10 environment"
+                        error "Your conda installation may need updating"
+                        error "Try: conda update conda"
+                        exit 1
+                    fi
+                fi
+            else
+                error "Failed to create conda environment"
+                exit 1
+            fi
+        fi
+    else
+        error "Failed to create conda environment"
+        exit 1
+    fi
     
-    # Install conda packages that are better from conda-forge
+    # Verify final environment
+    FINAL_ENV=$(conda info --envs | grep '*' | awk '{print $1}')
+    FINAL_PYTHON=$(python --version)
+    FINAL_PATH=$(which python)
+    
+    log "Final environment verification:"
+    info "  Environment: $FINAL_ENV"
+    info "  Python: $FINAL_PYTHON"
+    info "  Path: $FINAL_PATH"
+    
+    if [[ "$FINAL_ENV" != "$ENV_NAME" ]] || [[ ! "$FINAL_PYTHON" == *"3.10"* ]]; then
+        error "Environment verification failed!"
+        exit 1
+    fi
+    
+    # Install essential conda packages for Python 3.10
+    log "Installing essential conda packages..."
     conda install -c conda-forge -y \
+        pip \
+        setuptools \
+        wheel \
         numpy \
         scipy \
         matplotlib \
@@ -349,11 +425,33 @@ create_conda_env() {
         requests \
         psutil \
         packaging \
-        wheel \
-        setuptools \
         cython
     
-    log "Conda environment '$ENV_NAME' created successfully"
+    log "Conda environment '$ENV_NAME' created successfully with Python 3.10"
+}
+
+# Helper function to ensure proper conda environment activation
+activate_trellis_env() {
+    export PATH="$HOME/miniconda3/bin:$PATH"
+    source "$HOME/miniconda3/bin/activate" trellis
+    
+    # Verify environment is correctly activated
+    CURRENT_ENV=$(conda info --envs | grep '*' | awk '{print $1}' 2>/dev/null || echo "unknown")
+    CURRENT_PYTHON=$(python --version 2>/dev/null || echo "unknown")
+    PYTHON_PATH=$(which python 2>/dev/null || echo "unknown")
+    
+    if [[ "$CURRENT_ENV" != "trellis" ]] || [[ ! "$CURRENT_PYTHON" == *"3.10"* ]]; then
+        error "Failed to activate trellis environment properly!"
+        error "Expected: trellis environment with Python 3.10"
+        error "Got: $CURRENT_ENV environment with $CURRENT_PYTHON"
+        error "Python path: $PYTHON_PATH"
+        exit 1
+    fi
+    
+    # Set additional environment variables for this session
+    export PYTHONPATH="$HOME/TRELLIS:$PYTHONPATH"
+    export SPCONV_ALGO='native'
+    export CUDA_LAUNCH_BLOCKING=1
 }
 
 # Clone TRELLIS repository
@@ -384,11 +482,9 @@ clone_trellis() {
 install_pytorch_cuda() {
     log "Installing PyTorch with CUDA support..."
     
-    # Ensure conda is in PATH and activate environment
-    export PATH="$HOME/miniconda3/bin:$PATH"
-    source "$HOME/miniconda3/bin/activate" trellis
+    # Use helper function to ensure proper environment activation
+    activate_trellis_env
     
-    # Verify we're in the correct environment and Python version
     info "Active conda environment: $(conda info --envs | grep '*' | awk '{print $1}')"
     info "Python version: $(python --version)"
     info "Python path: $(which python)"
@@ -406,9 +502,12 @@ install_pytorch_cuda() {
 install_trellis_deps() {
     log "Installing TRELLIS dependencies..."
     
-    # Ensure conda is in PATH and activate environment
-    export PATH="$HOME/miniconda3/bin:$PATH"
-    source "$HOME/miniconda3/bin/activate" trellis
+    # Use helper function to ensure proper environment activation
+    activate_trellis_env
+    
+    info "Current conda environment: $(conda info --envs | grep '*' | awk '{print $1}')"
+    info "Current Python version: $(python --version)" 
+    info "Python executable path: $(which python)"
     
     # Change to TRELLIS directory
     cd "$HOME/TRELLIS"
