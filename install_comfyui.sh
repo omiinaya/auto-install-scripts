@@ -52,6 +52,7 @@ update_system() {
 install_basic_deps() {
     log "Installing basic dependencies..."
     sudo apt install -y \
+        sudo \
         curl \
         wget \
         git \
@@ -77,9 +78,11 @@ install_python() {
         python3 \
         python3-pip \
         python3-venv \
+        python3-full \
         python3-dev \
         python3-setuptools \
-        python3-wheel
+        python3-wheel \
+        pipx
     
     # Check Python version
     PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
@@ -92,8 +95,9 @@ install_python() {
         error "Python version is too old. ComfyUI requires Python 3.9 or higher."
     fi
     
-    # Upgrade pip
-    python3 -m pip install --upgrade pip
+    # Skip global pip upgrade due to externally-managed-environment
+    # We'll upgrade pip inside the virtual environment instead
+    info "Skipping global pip upgrade (will upgrade in virtual environment)"
 }
 
 # Install NVIDIA drivers for Proxmox container
@@ -146,7 +150,7 @@ create_venv() {
     source "$VENV_DIR/bin/activate"
     
     # Upgrade pip in virtual environment
-    pip install --upgrade pip
+    pip install --upgrade pip setuptools wheel
     
     log "Virtual environment created at $VENV_DIR"
 }
