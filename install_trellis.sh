@@ -325,8 +325,10 @@ create_conda_env() {
             conda env remove -n "$ENV_NAME" -y
         else
             info "Using existing conda environment"
+            # Initialize conda for this shell session
+            source "$HOME/miniconda3/etc/profile.d/conda.sh"
             # Still verify it has the right Python version
-            source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+            conda activate "$ENV_NAME"
             ACTUAL_PYTHON_VERSION=$(python --version)
             if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
                 error "Existing environment has wrong Python version: $ACTUAL_PYTHON_VERSION"
@@ -343,10 +345,13 @@ create_conda_env() {
     # Force Python 3.10 installation with multiple attempts
     info "Creating conda environment with Python 3.10..."
     
+    # Initialize conda for this shell session
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+    
     # Method 1: Try explicit Python 3.10
     log "Attempt 1: Creating environment with python=3.10"
     if conda create -n "$ENV_NAME" python=3.10 -y; then
-        source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+        conda activate "$ENV_NAME"
         ACTUAL_PYTHON_VERSION=$(python --version)
         info "Created environment with: $ACTUAL_PYTHON_VERSION"
         
@@ -360,7 +365,7 @@ create_conda_env() {
             # Method 2: Try with explicit version constraint
             log "Attempt 2: Creating environment with python=3.10.*"
             if conda create -n "$ENV_NAME" python=3.10.* -y; then
-                source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+                conda activate "$ENV_NAME"
                 ACTUAL_PYTHON_VERSION=$(python --version)
                 info "Created environment with: $ACTUAL_PYTHON_VERSION"
                 
@@ -371,7 +376,7 @@ create_conda_env() {
                     # Method 3: Force with conda-forge channel
                     log "Attempt 3: Creating environment with conda-forge channel"
                     conda create -n "$ENV_NAME" -c conda-forge python=3.10 -y
-                    source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
+                    conda activate "$ENV_NAME"
                     ACTUAL_PYTHON_VERSION=$(python --version)
                     info "Created environment with: $ACTUAL_PYTHON_VERSION"
                     
@@ -430,28 +435,46 @@ create_conda_env() {
     log "Conda environment '$ENV_NAME' created successfully with Python 3.10"
 }
 
-# Helper function to ensure proper conda environment activation
-activate_trellis_env() {
+# Helper function to run commands in the trellis conda environment
+run_in_trellis_env() {
+    local cmd="$1"
     export PATH="$HOME/miniconda3/bin:$PATH"
-    source "$HOME/miniconda3/bin/activate" trellis
     
-    # Verify environment is correctly activated
-    CURRENT_ENV=$(conda info --envs | grep '*' | awk '{print $1}' 2>/dev/null || echo "unknown")
-    CURRENT_PYTHON=$(python --version 2>/dev/null || echo "unknown")
-    PYTHON_PATH=$(which python 2>/dev/null || echo "unknown")
+    # Use conda run to execute commands in the environment
+    # This avoids shell activation issues
+    conda run -n trellis bash -c "
+        export PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH'
+        export SPCONV_ALGO='native'
+        export CUDA_LAUNCH_BLOCKING=1
+        $cmd
+    "
+}
+
+# Helper function to verify trellis environment exists and has correct Python
+verify_trellis_env() {
+    export PATH="$HOME/miniconda3/bin:$PATH"
     
-    if [[ "$CURRENT_ENV" != "trellis" ]] || [[ ! "$CURRENT_PYTHON" == *"3.10"* ]]; then
-        error "Failed to activate trellis environment properly!"
-        error "Expected: trellis environment with Python 3.10"
-        error "Got: $CURRENT_ENV environment with $CURRENT_PYTHON"
+    # Check if the environment exists
+    if ! conda env list | grep -q "^trellis "; then
+        error "Trellis conda environment not found!"
+        error "Available environments:"
+        conda env list
+        exit 1
+    fi
+    
+    # Check Python version in the environment
+    PYTHON_VERSION=$(conda run -n trellis python --version 2>/dev/null || echo "unknown")
+    PYTHON_PATH=$(conda run -n trellis which python 2>/dev/null || echo "unknown")
+    
+    if [[ ! "$PYTHON_VERSION" == *"3.10"* ]]; then
+        error "Trellis environment has wrong Python version!"
+        error "Expected: Python 3.10.x"
+        error "Got: $PYTHON_VERSION"
         error "Python path: $PYTHON_PATH"
         exit 1
     fi
     
-    # Set additional environment variables for this session
-    export PYTHONPATH="$HOME/TRELLIS:$PYTHONPATH"
-    export SPCONV_ALGO='native'
-    export CUDA_LAUNCH_BLOCKING=1
+    log "Trellis environment verified: $PYTHON_VERSION at $PYTHON_PATH"
 }
 
 # Clone TRELLIS repository
@@ -482,18 +505,21 @@ clone_trellis() {
 install_pytorch_cuda() {
     log "Installing PyTorch with CUDA support..."
     
-    # Use helper function to ensure proper environment activation
-    activate_trellis_env
+    # Verify environment exists and has correct Python version
+    verify_trellis_env
     
-    info "Active conda environment: $(conda info --envs | grep '*' | awk '{print $1}')"
-    info "Python version: $(python --version)"
-    info "Python path: $(which python)"
+    # Show environment info
+    info "Using conda environment: trellis"
+    info "Python version: $(conda run -n trellis python --version)"
+    info "Python path: $(conda run -n trellis which python)"
     
     # Upgrade pip in conda environment
-    pip install --upgrade pip setuptools wheel
+    log "Upgrading pip and setuptools..."
+    run_in_trellis_env "pip install --upgrade pip setuptools wheel"
     
     # Install PyTorch with CUDA 12.4 support (same as ComfyUI script)
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    log "Installing PyTorch with CUDA 12.4 support..."
+    run_in_trellis_env "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
     
     log "PyTorch with CUDA support installed"
 }
@@ -502,76 +528,60 @@ install_pytorch_cuda() {
 install_trellis_deps() {
     log "Installing TRELLIS dependencies..."
     
-    # Use helper function to ensure proper environment activation
-    activate_trellis_env
+    # Verify environment exists and has correct Python version
+    verify_trellis_env
     
-    info "Current conda environment: $(conda info --envs | grep '*' | awk '{print $1}')"
-    info "Current Python version: $(python --version)" 
-    info "Python executable path: $(which python)"
+    info "Using conda environment: trellis"
+    info "Python version: $(conda run -n trellis python --version)"
+    info "Python path: $(conda run -n trellis which python)"
     
-    # Change to TRELLIS directory
-    cd "$HOME/TRELLIS"
-    
-    # Set CUDA path if multiple versions exist
+    # Set CUDA environment variables for the conda environment
+    CUDA_ENV_VARS=""
     if [ -d "/usr/local/cuda-11.8/bin" ]; then
-        export PATH="/usr/local/cuda-11.8/bin:$PATH"
-        export CUDA_HOME="/usr/local/cuda-11.8"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8';"
         info "Using CUDA 11.8"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
-        export PATH="/usr/local/cuda-12.2/bin:$PATH"
-        export CUDA_HOME="/usr/local/cuda-12.2"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2';"
         info "Using CUDA 12.2"
     elif [ -d "/usr/local/cuda/bin" ]; then
-        export PATH="/usr/local/cuda/bin:$PATH"
-        export CUDA_HOME="/usr/local/cuda"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda';"
         info "Using default CUDA installation"
     fi
     
     # Make setup script executable
-    chmod +x setup.sh
+    run_in_trellis_env "cd '$HOME/TRELLIS' && chmod +x setup.sh"
     
-    # Install dependencies using the setup script step by step
+    # Install dependencies using the setup script step by step (in conda environment)
     info "Installing basic dependencies..."
-    source setup.sh --basic
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --basic"
     
     info "Installing xformers..."
-    source setup.sh --xformers
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --xformers"
     
     info "Installing flash-attn..."
-    source setup.sh --flash-attn
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --flash-attn"
     
     info "Installing diffoctreerast..."
-    source setup.sh --diffoctreerast
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --diffoctreerast"
     
     info "Installing spconv..."
-    source setup.sh --spconv
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --spconv"
     
     info "Installing mip-splatting..."
-    source setup.sh --mipgaussian
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --mipgaussian"
     
     info "Installing kaolin..."
-    source setup.sh --kaolin
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --kaolin"
     
     info "Installing nvdiffrast..."
-    source setup.sh --nvdiffrast
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --nvdiffrast"
     
     info "Installing demo dependencies..."
-    source setup.sh --demo
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --demo"
     
-    # Install additional Python packages that might be needed
-    pip install \
-        gradio \
-        transformers \
-        diffusers \
-        accelerate \
-        safetensors \
-        huggingface-hub \
-        trimesh \
-        pyopengl \
-        moderngl \
-        imageio-ffmpeg \
-        av \
-        decord
+    # Install additional Python packages that might be needed (in conda environment)
+    info "Installing additional Python packages..."
+    run_in_trellis_env "pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord"
     
     log "TRELLIS dependencies installed successfully"
 }
@@ -612,11 +622,12 @@ if [ ! -d "$TRELLIS_DIR" ]; then
     exit 1
 fi
 
-# Add conda to PATH
+# Add conda to PATH and initialize
 export PATH="$CONDA_DIR/bin:$PATH"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
 
 # Activate conda environment
-source "$CONDA_DIR/bin/activate" trellis
+conda activate trellis
 
 # Change to TRELLIS directory
 cd "$TRELLIS_DIR"
@@ -666,7 +677,8 @@ fi
 
 # Add conda to PATH and activate environment
 export PATH="$CONDA_DIR/bin:$PATH"
-source "$CONDA_DIR/bin/activate" trellis
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate trellis
 cd "$TRELLIS_DIR"
 
 # Set environment variables
@@ -711,7 +723,8 @@ fi
 
 # Add conda to PATH and activate environment
 export PATH="$CONDA_DIR/bin:$PATH"
-source "$CONDA_DIR/bin/activate" trellis
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate trellis
 cd "$TRELLIS_DIR"
 
 # Set environment variables
@@ -792,7 +805,8 @@ test_installation() {
     
     # Ensure conda is in PATH and activate environment
     export PATH="$HOME/miniconda3/bin:$PATH"
-    source "$HOME/miniconda3/bin/activate" trellis
+    source "$HOME/miniconda3/etc/profile.d/conda.sh"
+    conda activate trellis
     
     # Change to TRELLIS directory
     cd "$HOME/TRELLIS"
@@ -836,7 +850,8 @@ print_instructions() {
     echo
     info "Manual activation commands:"
     echo "  export PATH=\"$HOME/miniconda3/bin:\$PATH\""
-    echo "  source \"$HOME/miniconda3/bin/activate\" trellis"
+    echo "  source \"$HOME/miniconda3/etc/profile.d/conda.sh\""
+    echo "  conda activate trellis"
     echo "  cd $HOME/TRELLIS"
     echo "  export SPCONV_ALGO='native'"
     echo "  python app.py"
