@@ -246,14 +246,14 @@ install_python() {
     info "Skipping global pip upgrade (will upgrade in virtual environment)"
 }
 
-# Install NVIDIA drivers for Proxmox container
+# Install NVIDIA drivers and CUDA toolkit for Proxmox container
 install_nvidia_drivers() {
-    if ! ask_yes_no "Do you want to install NVIDIA drivers?" "y"; then
+    if ! ask_yes_no "Do you want to install NVIDIA drivers and CUDA toolkit?" "y"; then
         warn "Skipping NVIDIA driver installation. GPU acceleration will not be available."
         return 0
     fi
     
-    log "Installing NVIDIA drivers for Proxmox container..."
+    log "Installing NVIDIA drivers and CUDA toolkit for Proxmox container..."
     
     # Add NVIDIA CUDA repository
     info "Adding NVIDIA CUDA repository..."
@@ -267,13 +267,37 @@ install_nvidia_drivers() {
     info "Installing NVIDIA drivers..."
     sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
     
+    # Install CUDA toolkit (needed for nvcc and development)
+    info "Installing CUDA toolkit..."
+    sudo apt install -y \
+        cuda-toolkit-12-4 \
+        cuda-compiler-12-4 \
+        cuda-libraries-dev-12-4 \
+        cuda-driver-dev-12-4 \
+        libcudnn8-dev \
+        libnccl-dev \
+        libnccl2
+    
     # Reconfigure NVIDIA kernel DKMS
     sudo dpkg-reconfigure nvidia-kernel-dkms
+    
+    # Set up CUDA environment globally
+    info "Setting up CUDA environment..."
+    echo 'export PATH="/usr/local/cuda-12.4/bin:$PATH"' | sudo tee -a /etc/environment
+    echo 'export CUDA_HOME="/usr/local/cuda-12.4"' | sudo tee -a /etc/environment
+    echo 'export LD_LIBRARY_PATH="/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH"' | sudo tee -a /etc/environment
+    
+    # Create symlink for default CUDA
+    if [ ! -L "/usr/local/cuda" ]; then
+        sudo ln -sf /usr/local/cuda-12.4 /usr/local/cuda
+    fi
     
     # Clean up
     rm -f cuda-keyring_1.1-1_all.deb
     
-    log "NVIDIA drivers installed successfully"
+    log "NVIDIA drivers and CUDA toolkit installed successfully"
+    info "CUDA_HOME will be set to: /usr/local/cuda-12.4"
+    info "You may need to restart or source /etc/environment for global changes"
 }
 
 # Install Conda
@@ -440,9 +464,22 @@ run_in_trellis_env() {
     local cmd="$1"
     export PATH="$HOME/miniconda3/bin:$PATH"
     
+    # Detect CUDA installation
+    local cuda_vars=""
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        cuda_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+        cuda_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda/bin" ]; then
+        cuda_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
+    fi
+    
     # Use conda run to execute commands in the environment
     # This avoids shell activation issues
     conda run -n trellis bash -c "
+        $cuda_vars
         export PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH'
         export SPCONV_ALGO='native'
         export CUDA_LAUNCH_BLOCKING=1
@@ -501,12 +538,57 @@ clone_trellis() {
     log "TRELLIS repository cloned successfully at $TRELLIS_DIR"
 }
 
+# Verify CUDA installation
+verify_cuda_installation() {
+    log "Verifying CUDA installation..."
+    
+    # Check if nvcc is available
+    if command -v nvcc >/dev/null 2>&1; then
+        NVCC_VERSION=$(nvcc --version | grep "release" | awk '{print $6}' | cut -c2-)
+        info "Found nvcc version: $NVCC_VERSION"
+    else
+        warn "nvcc not found in PATH. Checking common locations..."
+        
+        # Check common CUDA paths
+        local cuda_found=false
+        for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
+            if [ -f "$cuda_path/bin/nvcc" ]; then
+                info "Found nvcc at: $cuda_path/bin/nvcc"
+                NVCC_VERSION=$($cuda_path/bin/nvcc --version | grep "release" | awk '{print $6}' | cut -c2-)
+                info "NVCC version: $NVCC_VERSION"
+                cuda_found=true
+                break
+            fi
+        done
+        
+        if [ "$cuda_found" = false ]; then
+            error "CUDA toolkit not found! This is required for compiling CUDA extensions."
+            echo "Please install CUDA toolkit with:"
+            echo "  sudo apt install cuda-toolkit-12-4"
+            echo "Or run the script again and choose 'y' when asked about NVIDIA drivers."
+            exit 1
+        fi
+    fi
+    
+    # Check CUDA_HOME
+    if [ -z "$CUDA_HOME" ]; then
+        warn "CUDA_HOME not set globally. Will set per-command."
+    else
+        info "CUDA_HOME: $CUDA_HOME"
+    fi
+    
+    log "CUDA verification completed"
+}
+
 # Install PyTorch with CUDA support
 install_pytorch_cuda() {
     log "Installing PyTorch with CUDA support..."
     
     # Verify environment exists and has correct Python version
     verify_trellis_env
+    
+    # Verify CUDA is available
+    verify_cuda_installation
     
     # Show environment info
     info "Using conda environment: trellis"
@@ -520,6 +602,10 @@ install_pytorch_cuda() {
     # Install PyTorch with CUDA 12.4 support (same as ComfyUI script)
     log "Installing PyTorch with CUDA 12.4 support..."
     run_in_trellis_env "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+    
+    # Verify PyTorch CUDA installation
+    log "Verifying PyTorch CUDA installation..."
+    run_in_trellis_env "python -c 'import torch; print(f\"PyTorch version: {torch.__version__}\"); print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'"
     
     log "PyTorch with CUDA support installed"
 }
@@ -537,15 +623,21 @@ install_trellis_deps() {
     
     # Set CUDA environment variables for the conda environment
     CUDA_ENV_VARS=""
-    if [ -d "/usr/local/cuda-11.8/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8';"
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+        info "Using CUDA 12.4"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
         info "Using CUDA 11.8"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2';"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
         info "Using CUDA 12.2"
     elif [ -d "/usr/local/cuda/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda';"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
         info "Using default CUDA installation"
+    else
+        warn "No CUDA installation found. CUDA-dependent packages may fail to install."
+        warn "Please ensure CUDA toolkit is installed with: sudo apt install cuda-toolkit-12-4"
     fi
     
     # Make setup script executable
