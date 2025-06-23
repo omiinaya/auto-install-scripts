@@ -60,10 +60,19 @@ ask_yes_no() {
 # Check if running as root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
-        warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        if ! ask_yes_no "Do you want to continue anyway?" "n"; then
+        warn "Running as root is not recommended for TRELLIS installation."
+        warn "This can cause permission issues and conflicts with conda/pip."
+        echo
+        info "Recommended approach:"
+        echo "  1. Create a regular user: adduser trellis"
+        echo "  2. Add to sudo group: usermod -aG sudo trellis"
+        echo "  3. Switch to user: su - trellis"
+        echo "  4. Run this script as the regular user"
+        echo
+        if ! ask_yes_no "Do you want to continue as root anyway? (NOT recommended)" "n"; then
             exit 1
         fi
+        warn "Continuing as root - you may encounter permission issues later."
     fi
 }
 
@@ -73,11 +82,37 @@ update_system() {
     sudo apt update && sudo apt upgrade -y
 }
 
+# Check and install sudo if missing
+check_and_install_sudo() {
+    if ! command -v sudo >/dev/null 2>&1; then
+        warn "sudo is not installed. Installing sudo first..."
+        
+        # Check if we're running as root
+        if [[ $EUID -eq 0 ]]; then
+            # We're root, can install directly
+            apt update
+            apt install -y sudo
+            log "sudo installed successfully"
+        else
+            # We're not root and don't have sudo - need manual intervention
+            error "sudo is not installed and you're not running as root."
+            echo "Please run one of the following commands first:"
+            echo "  1. As root: apt update && apt install -y sudo"
+            echo "  2. Using su: su -c 'apt update && apt install -y sudo'"
+            echo "Then add your user to the sudo group:"
+            echo "  usermod -aG sudo \$(whoami)"
+            echo "Log out and log back in, then run this script again."
+            exit 1
+        fi
+    else
+        info "sudo is already installed"
+    fi
+}
+
 # Install essential system packages (often missing in minimal Debian 12)
 install_essential_packages() {
     log "Installing essential system packages..."
     sudo apt install -y \
-        sudo \
         curl \
         wget \
         ca-certificates \
@@ -228,16 +263,9 @@ install_nvidia_drivers() {
     # Update package list
     sudo apt update
     
-    # Install NVIDIA drivers and CUDA toolkit
-    info "Installing NVIDIA drivers and CUDA toolkit..."
-    sudo apt install -y \
-        nvidia-driver \
-        nvidia-kernel-dkms \
-        cuda-toolkit-11-8 \
-        cuda-toolkit-12-2 \
-        libcudnn8 \
-        libcudnn8-dev \
-        nvidia-cuda-toolkit
+    # Install NVIDIA drivers
+    info "Installing NVIDIA drivers..."
+    sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
     
     # Reconfigure NVIDIA kernel DKMS
     sudo dpkg-reconfigure nvidia-kernel-dkms
@@ -301,8 +329,8 @@ create_conda_env() {
         fi
     fi
     
-    # Create conda environment with Python 3.10
-    conda create -n "$ENV_NAME" python=3.10 -y
+    # Create conda environment with Python 3.10 (specify exact version)
+    conda create -n "$ENV_NAME" python=3.10.12 -y
     
     # Activate environment and install conda packages
     source "$HOME/miniconda3/bin/activate" "$ENV_NAME"
@@ -360,11 +388,16 @@ install_pytorch_cuda() {
     export PATH="$HOME/miniconda3/bin:$PATH"
     source "$HOME/miniconda3/bin/activate" trellis
     
+    # Verify we're in the correct environment and Python version
+    info "Active conda environment: $(conda info --envs | grep '*' | awk '{print $1}')"
+    info "Python version: $(python --version)"
+    info "Python path: $(which python)"
+    
     # Upgrade pip in conda environment
     pip install --upgrade pip setuptools wheel
     
-    # Install PyTorch with CUDA 12.1 support (compatible with CUDA 11.8 and 12.x)
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+    # Install PyTorch with CUDA 12.4 support (same as ComfyUI script)
+    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
     
     log "PyTorch with CUDA support installed"
 }
@@ -775,6 +808,7 @@ main() {
         exit 0
     fi
     
+    check_and_install_sudo
     check_root
     update_system
     install_essential_packages
