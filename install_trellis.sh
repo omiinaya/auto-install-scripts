@@ -273,10 +273,12 @@ install_nvidia_drivers() {
         cuda-toolkit-12-4 \
         cuda-compiler-12-4 \
         cuda-libraries-dev-12-4 \
-        cuda-driver-dev-12-4 \
-        libcudnn8-dev \
-        libnccl-dev \
-        libnccl2
+        cuda-driver-dev-12-4
+    
+    # Note: cuDNN and NCCL are not available in NVIDIA repository for Debian 12
+    # These will be installed via conda/pip in the Python environment instead
+    info "Skipping cuDNN and NCCL system packages (not available for Debian 12)"
+    warn "cuDNN and NCCL will be installed via conda/pip in the Python environment"
     
     # Reconfigure NVIDIA kernel DKMS
     sudo dpkg-reconfigure nvidia-kernel-dkms
@@ -733,6 +735,10 @@ install_trellis_deps() {
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
     run_in_trellis_env "pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord"
+    
+    # Install cuDNN via conda (since it's not available as system package on Debian 12)
+    info "Installing cuDNN via conda..."
+    run_in_trellis_env "conda install -c conda-forge cudnn -y" || warn "cuDNN conda installation failed, but may not be strictly required"
     
     log "TRELLIS dependencies installed successfully"
 }
