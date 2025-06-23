@@ -599,15 +599,80 @@ install_pytorch_cuda() {
     log "Upgrading pip and setuptools..."
     run_in_trellis_env "pip install --upgrade pip setuptools wheel"
     
-    # Install PyTorch with CUDA 12.4 support (same as ComfyUI script)
-    log "Installing PyTorch with CUDA 12.4 support..."
-    run_in_trellis_env "pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+    # Install compatible PyTorch version (2.5.1 instead of 2.6.0 for better compatibility)
+    log "Installing PyTorch 2.5.1 with CUDA 12.4 support for better package compatibility..."
+    run_in_trellis_env "pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
     
     # Verify PyTorch CUDA installation
     log "Verifying PyTorch CUDA installation..."
     run_in_trellis_env "python -c 'import torch; print(f\"PyTorch version: {torch.__version__}\"); print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'"
     
     log "PyTorch with CUDA support installed"
+}
+
+# Set permanent CUDA environment variables in conda environment
+setup_cuda_env_vars() {
+    log "Setting up CUDA environment variables in conda environment..."
+    
+    # Determine CUDA path
+    local cuda_path=""
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_path="/usr/local/cuda-12.4"
+        info "Using CUDA 12.4"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        cuda_path="/usr/local/cuda-11.8"
+        info "Using CUDA 11.8"
+    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+        cuda_path="/usr/local/cuda-12.2"
+        info "Using CUDA 12.2"
+    elif [ -d "/usr/local/cuda/bin" ]; then
+        cuda_path="/usr/local/cuda"
+        info "Using default CUDA installation"
+    else
+        error "No CUDA installation found!"
+        error "Please install CUDA toolkit first: sudo apt install cuda-toolkit-12-4"
+        exit 1
+    fi
+    
+    # Create conda environment activation script to set CUDA variables
+    local env_vars_dir="$HOME/miniconda3/envs/trellis/etc/conda/activate.d"
+    local env_vars_script="$env_vars_dir/cuda_env_vars.sh"
+    
+    # Create activation directory if it doesn't exist
+    mkdir -p "$env_vars_dir"
+    
+    # Create script to set CUDA environment variables
+    cat > "$env_vars_script" << EOF
+#!/bin/bash
+# CUDA environment variables for TRELLIS
+export CUDA_HOME="$cuda_path"
+export PATH="$cuda_path/bin:\$PATH"
+export LD_LIBRARY_PATH="$cuda_path/lib64:\$LD_LIBRARY_PATH"
+export CUDA_LAUNCH_BLOCKING=1
+export SPCONV_ALGO='native'
+EOF
+    
+    chmod +x "$env_vars_script"
+    
+    # Also create deactivation script
+    local deactivate_dir="$HOME/miniconda3/envs/trellis/etc/conda/deactivate.d"
+    local deactivate_script="$deactivate_dir/cuda_env_vars.sh"
+    
+    mkdir -p "$deactivate_dir"
+    
+    cat > "$deactivate_script" << EOF
+#!/bin/bash
+# Remove CUDA environment variables when deactivating TRELLIS environment
+unset CUDA_HOME
+# Note: We don't unset PATH and LD_LIBRARY_PATH as they might be used by other applications
+EOF
+    
+    chmod +x "$deactivate_script"
+    
+    log "CUDA environment variables configured for conda environment"
+    info "CUDA_HOME: $cuda_path"
+    info "PATH: $cuda_path/bin (added)"
+    info "LD_LIBRARY_PATH: $cuda_path/lib64 (added)"
 }
 
 # Install TRELLIS dependencies
@@ -617,28 +682,16 @@ install_trellis_deps() {
     # Verify environment exists and has correct Python version
     verify_trellis_env
     
+    # Set up CUDA environment variables permanently
+    setup_cuda_env_vars
+    
     info "Using conda environment: trellis"
     info "Python version: $(conda run -n trellis python --version)"
     info "Python path: $(conda run -n trellis which python)"
     
-    # Set CUDA environment variables for the conda environment
-    CUDA_ENV_VARS=""
-    if [ -d "/usr/local/cuda-12.4/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
-        info "Using CUDA 12.4"
-    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
-        info "Using CUDA 11.8"
-    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
-        info "Using CUDA 12.2"
-    elif [ -d "/usr/local/cuda/bin" ]; then
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
-        info "Using default CUDA installation"
-    else
-        warn "No CUDA installation found. CUDA-dependent packages may fail to install."
-        warn "Please ensure CUDA toolkit is installed with: sudo apt install cuda-toolkit-12-4"
-    fi
+    # Verify CUDA environment is properly set
+    log "Verifying CUDA environment in conda environment..."
+    run_in_trellis_env "echo 'CUDA_HOME:' \$CUDA_HOME && echo 'nvcc version:' && nvcc --version"
     
     # Make setup script executable
     run_in_trellis_env "cd '$HOME/TRELLIS' && chmod +x setup.sh"
@@ -647,8 +700,11 @@ install_trellis_deps() {
     info "Installing basic dependencies..."
     run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --basic"
     
-    info "Installing xformers..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --xformers"
+    info "Installing xformers (compatible version for PyTorch 2.5.1)..."
+    # Install specific xformers version compatible with PyTorch 2.5.1
+    run_in_trellis_env "$CUDA_ENV_VARS pip install xformers==0.0.28.post3 --no-deps"
+    # Also try the original setup script in case there are additional dependencies
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
     
     info "Installing flash-attn..."
     run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --flash-attn"
@@ -662,8 +718,11 @@ install_trellis_deps() {
     info "Installing mip-splatting..."
     run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --mipgaussian"
     
-    info "Installing kaolin..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --kaolin"
+    info "Installing kaolin (compatible version for PyTorch 2.5.1)..."
+    # Install kaolin using pip with compatible PyTorch version
+    run_in_trellis_env "$CUDA_ENV_VARS pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html"
+    # Also try the original setup script in case there are additional dependencies
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
     
     info "Installing nvdiffrast..."
     run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --nvdiffrast"
