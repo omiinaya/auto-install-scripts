@@ -328,17 +328,41 @@ install_comfyui() {
     if [ -d "$COMFY_DIR" ]; then
         warn "ComfyUI directory already exists at $COMFY_DIR"
         if ask_yes_no "Do you want to remove it and install fresh?" "n"; then
-            rm -rf "$COMFY_DIR"
-        else
             info "Using existing ComfyUI installation"
             return 0
+        else
+            rm -rf "$COMFY_DIR"
         fi
     fi
     
-    # Install ComfyUI using comfy-cli
-    comfy --workspace="$COMFY_DIR" install
+    # Try to install ComfyUI using comfy-cli first
+    if command -v comfy >/dev/null 2>&1; then
+        info "Installing ComfyUI using comfy-cli..."
+        if comfy --workspace="$COMFY_DIR" install; then
+            log "ComfyUI installed successfully using comfy-cli"
+        else
+            warn "comfy-cli installation failed, trying manual installation..."
+        fi
+    fi
     
-    log "ComfyUI installed successfully at $COMFY_DIR"
+    # If comfy-cli failed or doesn't exist, install manually
+    if [ ! -f "$COMFY_DIR/main.py" ]; then
+        info "Installing ComfyUI manually via git clone..."
+        git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFY_DIR"
+        
+        # Install ComfyUI requirements
+        cd "$COMFY_DIR"
+        if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+        fi
+    fi
+    
+    # Verify installation
+    if [ -f "$COMFY_DIR/main.py" ]; then
+        log "ComfyUI installed successfully at $COMFY_DIR"
+    else
+        error "ComfyUI installation failed - main.py not found"
+    fi
 }
 
 # Install PyTorch with CUDA support
@@ -421,9 +445,9 @@ echo -e "${GREEN}Access ComfyUI from network at: http://$(hostname -I | awk '{pr
 echo -e "${GREEN}Press Ctrl+C to stop ComfyUI${NC}"
 echo
 
-# Launch ComfyUI with network access by default
-# Use -- to pass arguments to the underlying ComfyUI process
-comfy launch -- --listen 0.0.0.0 "$@"
+# Launch ComfyUI directly with Python (not through comfy-cli)
+# ComfyUI main.py supports all the standard arguments
+python main.py --listen 0.0.0.0 --port 8188 "$@"
 EOF
 
     # Make the launcher script executable
@@ -556,31 +580,81 @@ download_essential_models() {
     
     cd "$HOME/comfy/models/checkpoints"
     
-    # Download SD 1.5 (the one causing the error)
-    info "Downloading Stable Diffusion 1.5..."
-    if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
-        log "SD 1.5 downloaded successfully"
+    # Change to ComfyUI directory for comfy-cli commands
+    cd "$HOME/comfy"
+    
+    # Download SD 1.5 (the one causing the error) using comfy-cli
+    info "Downloading Stable Diffusion 1.5 using comfy-cli..."
+    if command -v comfy >/dev/null 2>&1; then
+        if comfy model download --url https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors --relative-path models/checkpoints; then
+            log "SD 1.5 downloaded successfully using comfy-cli"
+        else
+            warn "comfy-cli download failed, trying wget..."
+            cd "$HOME/comfy/models/checkpoints"
+            if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
+                log "SD 1.5 downloaded successfully using wget"
+            else
+                warn "Failed to download SD 1.5 model"
+            fi
+        fi
     else
-        warn "Failed to download SD 1.5 model"
+        warn "comfy-cli not available, using wget..."
+        cd "$HOME/comfy/models/checkpoints"
+        if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
+            log "SD 1.5 downloaded successfully using wget"
+        else
+            warn "Failed to download SD 1.5 model"
+        fi
     fi
     
     # Download SDXL Base (optional)
     if ask_yes_no "Do you want to download SDXL Base model? (6.6GB)" "n"; then
         info "Downloading SDXL Base..."
-        if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
-            log "SDXL Base downloaded successfully"
+        cd "$HOME/comfy"
+        if command -v comfy >/dev/null 2>&1; then
+            if comfy model download --url https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors --relative-path models/checkpoints; then
+                log "SDXL Base downloaded successfully using comfy-cli"
+            else
+                warn "comfy-cli download failed, trying wget..."
+                cd "$HOME/comfy/models/checkpoints"
+                if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
+                    log "SDXL Base downloaded successfully using wget"
+                else
+                    warn "Failed to download SDXL Base model"
+                fi
+            fi
         else
-            warn "Failed to download SDXL Base model"
+            cd "$HOME/comfy/models/checkpoints"
+            if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
+                log "SDXL Base downloaded successfully using wget"
+            else
+                warn "Failed to download SDXL Base model"
+            fi
         fi
     fi
     
     # Download VAE
-    cd "$HOME/comfy/models/vae"
     info "Downloading VAE model..."
-    if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
-        log "VAE model downloaded successfully"
+    cd "$HOME/comfy"
+    if command -v comfy >/dev/null 2>&1; then
+        if comfy model download --url https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors --relative-path models/vae; then
+            log "VAE model downloaded successfully using comfy-cli"
+        else
+            warn "comfy-cli download failed, trying wget..."
+            cd "$HOME/comfy/models/vae"
+            if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
+                log "VAE model downloaded successfully using wget"
+            else
+                warn "Failed to download VAE model"
+            fi
+        fi
     else
-        warn "Failed to download VAE model"
+        cd "$HOME/comfy/models/vae"
+        if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
+            log "VAE model downloaded successfully using wget"
+        else
+            warn "Failed to download VAE model"
+        fi
     fi
     
     log "Model download completed!"
