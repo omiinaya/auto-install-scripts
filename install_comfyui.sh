@@ -150,6 +150,105 @@ install_nvidia_drivers() {
     log "NVIDIA drivers installed successfully"
 }
 
+# Install nvcc compiler
+install_nvcc() {
+    log "Ensuring nvcc compiler is installed..."
+    
+    # Check if nvcc is already available
+    if command -v nvcc >/dev/null 2>&1; then
+        info "nvcc already available at: $(which nvcc)"
+        nvcc --version | head -1
+        return 0
+    fi
+    
+    info "nvcc not found, installing CUDA development tools..."
+    
+    # Install comprehensive CUDA development packages
+    sudo apt update
+    
+    # First try the standard CUDA packages that should be available
+    info "Attempting to install CUDA toolkit packages..."
+    sudo apt install -y \
+        cuda-toolkit-12-6 \
+        cuda-compiler-12-6 \
+        cuda-nvcc-12-6 \
+        cuda-toolkit-config-common \
+        cuda-runtime-12-6 \
+        cuda-drivers || warn "Some primary CUDA packages could not be installed"
+    
+    # If that fails, try installing the full CUDA toolkit
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Primary packages failed, trying full CUDA installation..."
+        sudo apt install -y cuda || warn "Full CUDA installation failed"
+    fi
+    
+    # If still no nvcc, try alternative approaches
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Trying alternative CUDA package names..."
+        sudo apt install -y \
+            cuda-toolkit \
+            cuda-nvcc \
+            cuda-compiler \
+            libcuda1 \
+            libcudart12 || warn "Alternative CUDA packages failed"
+    fi
+    
+    # Last resort: try to install from nvidia-cuda-toolkit if available
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Trying nvidia-cuda-toolkit as last resort..."
+        sudo apt install -y nvidia-cuda-toolkit || warn "nvidia-cuda-toolkit not available"
+    fi
+    
+    # Refresh PATH to pick up newly installed binaries
+    export PATH="/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/local/cuda-12/bin:/usr/local/cuda-12.6/bin:/usr/local/cuda-12.9/bin:$PATH"
+    hash -r
+    
+    # Verify nvcc installation and make it globally available
+    if command -v nvcc >/dev/null 2>&1; then
+        log "nvcc successfully installed at: $(which nvcc)"
+        nvcc --version | head -1
+    else
+        warn "nvcc still not found after installation attempts"
+        info "Searching for nvcc in the system..."
+        find /usr -name nvcc -type f 2>/dev/null | head -5 || warn "No nvcc found in /usr"
+        
+        # Find nvcc and make it globally available
+        NVCC_LOCATION=$(find /usr -name nvcc -type f 2>/dev/null | head -1)
+        if [ -n "$NVCC_LOCATION" ]; then
+            info "Found nvcc at: $NVCC_LOCATION"
+            
+            # Create symlink in /usr/local/bin (which is in everyone's PATH)
+            sudo ln -sf "$NVCC_LOCATION" /usr/local/bin/nvcc
+            info "Created global symlink: /usr/local/bin/nvcc -> $NVCC_LOCATION"
+            
+            # Also create symlinks for other CUDA tools if they exist
+            NVCC_DIR=$(dirname "$NVCC_LOCATION")
+            for tool in nvprof nsight-compute nsight-systems; do
+                if [ -f "$NVCC_DIR/$tool" ]; then
+                    sudo ln -sf "$NVCC_DIR/$tool" "/usr/local/bin/$tool"
+                    info "Created symlink: /usr/local/bin/$tool"
+                fi
+            done
+            
+            # Add the CUDA bin directory to system PATH permanently
+            if [ ! -f "/etc/profile.d/cuda.sh" ]; then
+                sudo tee /etc/profile.d/cuda.sh > /dev/null << EOF
+# CUDA tools PATH (added by ComfyUI installer)
+export PATH="$NVCC_DIR:\$PATH"
+export CUDA_HOME="$(dirname "$NVCC_DIR")"
+export LD_LIBRARY_PATH="$(dirname "$NVCC_DIR")/lib64:\$LD_LIBRARY_PATH"
+EOF
+                info "Created /etc/profile.d/cuda.sh for system-wide CUDA environment"
+            fi
+            
+            log "nvcc successfully configured at: $(which nvcc)"
+        else
+            warn "Could not find nvcc anywhere in the system"
+            warn "Some CUDA-dependent packages may fail to install"
+        fi
+    fi
+}
+
 # Create virtual environment
 create_venv() {
     log "Creating Python virtual environment..."
@@ -443,6 +542,7 @@ main() {
     install_basic_deps
     install_python
     install_nvidia_drivers
+    install_nvcc
     create_venv
     install_comfy_cli
     install_comfyui
