@@ -133,7 +133,7 @@ install_nvidia_drivers() {
     info "Downloading NVIDIA driver installer from GitHub..."
     
     # You can set NVIDIA_INSTALLER_URL environment variable to use a custom URL
-    NVIDIA_INSTALLER_URL="${NVIDIA_INSTALLER_URL:-https://raw.githubusercontent.com/USER/REPO/main/install_nvidia_drivers.sh}"
+    NVIDIA_INSTALLER_URL="${NVIDIA_INSTALLER_URL:-https://raw.githubusercontent.com/omiinaya/install-scripts/refs/heads/main/modules/install_nvidia_drivers.sh}"
     
     # Create temporary directory for the installer
     TEMP_DIR=$(mktemp -d)
@@ -162,7 +162,7 @@ install_nvcc() {
     info "Downloading CUDA installer from GitHub..."
     
     # You can set CUDA_INSTALLER_URL environment variable to use a custom URL
-    CUDA_INSTALLER_URL="${CUDA_INSTALLER_URL:-https://raw.githubusercontent.com/USER/REPO/main/install_cuda_nvcc.sh}"
+    CUDA_INSTALLER_URL="${CUDA_INSTALLER_URL:-https://raw.githubusercontent.com/omiinaya/install-scripts/refs/heads/main/modules/install_cuda_nvcc.sh}"
     
     # Create temporary directory for the installer
     TEMP_DIR=$(mktemp -d)
