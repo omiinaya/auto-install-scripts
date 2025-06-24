@@ -175,7 +175,8 @@ install_basic_deps() {
         tree \
         rsync \
         openssh-client \
-        locales
+        locales \
+        pciutils
 }
 
 # Install system libraries required for Stable Diffusion WebUI
@@ -302,21 +303,50 @@ install_nvidia_drivers() {
     if ask_yes_no "Install NVIDIA drivers and CUDA toolkit?" "y"; then
         log "Installing NVIDIA drivers and CUDA toolkit..."
         
-        # Add NVIDIA repository
-        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb
+        # Install NVIDIA drivers for Debian 12
+        info "Installing NVIDIA drivers for Debian 12..."
+        
+        # Add non-free repository for NVIDIA drivers
+        sudo apt install -y software-properties-common
+        sudo apt update
+        
+        # Install NVIDIA drivers (Proxmox container approach)
+        sudo apt install -y nvidia-driver nvidia-smi
+        
+        # Install CUDA toolkit
+        info "Installing CUDA toolkit..."
+        
+        # Add NVIDIA CUDA repository for Debian
+        wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         sudo apt update
         
-        # Install CUDA toolkit and drivers
-        sudo apt install -y cuda-toolkit-12-4 nvidia-driver-535
+        # Install CUDA toolkit
+        sudo apt install -y cuda-toolkit-12-4
         
         # Install cuDNN
         sudo apt install -y libcudnn8
         
-        log "NVIDIA drivers and CUDA toolkit installed"
-        info "Please reboot your system after installation"
+        # Verify installation
+        if command -v nvidia-smi >/dev/null 2>&1; then
+            log "NVIDIA drivers installed successfully"
+            nvidia-smi
+        else
+            warn "NVIDIA drivers may not be properly installed"
+            warn "This is normal in Proxmox containers - GPU passthrough may be required"
+        fi
         
-        if ask_yes_no "Reboot now?" "n"; then
+        if command -v nvcc >/dev/null 2>&1; then
+            log "CUDA toolkit installed successfully"
+            nvcc --version
+        else
+            warn "CUDA toolkit may not be properly installed"
+        fi
+        
+        log "NVIDIA drivers and CUDA toolkit installation completed"
+        info "If running in Proxmox, ensure GPU passthrough is properly configured"
+        
+        if ask_yes_no "Reboot now to complete driver installation?" "n"; then
             sudo reboot
         fi
     else
