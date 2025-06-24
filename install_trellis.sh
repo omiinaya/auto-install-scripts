@@ -661,15 +661,31 @@ install_pytorch_cuda() {
     log "Upgrading pip and setuptools..."
     run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install --upgrade pip setuptools wheel"
     
-    # Install compatible PyTorch version (2.5.1 instead of 2.6.0 for better compatibility)
-    log "Installing PyTorch 2.5.1 with CUDA 12.4 support for better package compatibility..."
-    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+    # Check if PyTorch is already installed
+    log "Checking if PyTorch is already installed..."
+    if run_in_trellis_env "python -c 'import torch; print(f\"PyTorch {torch.__version__} already installed\")'" 2>/dev/null; then
+        info "PyTorch is already installed"
+    else
+        # Install compatible PyTorch version (2.5.1 instead of 2.6.0 for better compatibility)
+        log "Installing PyTorch 2.5.1 with CUDA 12.4 support for better package compatibility..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+        
+        # Verify PyTorch installation
+        if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
+            warn "PyTorch installation failed, trying alternative method..."
+            run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+        fi
+    fi
     
     # Verify PyTorch CUDA installation
     log "Verifying PyTorch CUDA installation..."
-    run_in_trellis_env "python -c 'import torch; print(f\"PyTorch version: {torch.__version__}\"); print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'"
-    
-    log "PyTorch with CUDA support installed"
+    if run_in_trellis_env "python -c 'import torch; print(f\"PyTorch version: {torch.__version__}\"); print(f\"CUDA available: {torch.cuda.is_available()}\"); print(f\"CUDA version: {torch.version.cuda}\")'" 2>/dev/null; then
+        log "PyTorch with CUDA support installed successfully"
+    else
+        error "PyTorch installation verification failed!"
+        error "Please check the installation logs and try again."
+        exit 1
+    fi
 }
 
 # Set permanent CUDA environment variables in conda environment
@@ -1108,6 +1124,13 @@ EOF
 # Test installation
 test_installation() {
     log "Testing installation..."
+    
+    # First verify PyTorch is installed
+    info "Verifying PyTorch installation in conda environment..."
+    if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
+        warn "PyTorch not found in conda environment, attempting to install..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+    fi
     
     # Use the run_in_trellis_env function to test in the proper environment
     info "Testing Python imports in conda environment..."
