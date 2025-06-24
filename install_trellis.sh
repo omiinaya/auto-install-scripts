@@ -176,8 +176,7 @@ install_basic_deps() {
         rsync \
         openssh-client \
         locales \
-        util-linux \
-        getopt
+        util-linux
 }
 
 # Install system libraries required for TRELLIS
