@@ -548,9 +548,9 @@ install_attention_kernels() {
         
         if [ -f "$CUDA_HOME_TO_USE/bin/nvcc" ]; then
             info "Installing flash-attention with CUDA_HOME=$CUDA_HOME_TO_USE"
-            # Install with proper CUDA environment
+            # Install specific version compatible with xformers (2.7.1-2.7.4)
             CUDA_HOME="$CUDA_HOME_TO_USE" \
-            pip install flash-attn --no-build-isolation || warn "Failed to install flash-attention, continuing without it"
+            pip install "flash-attn>=2.7.1,<=2.7.4" --no-build-isolation || warn "Failed to install flash-attention, continuing without it"
         else
             warn "nvcc compiler not found. Skipping flash-attention installation."
             warn "You can install it manually later if needed."
