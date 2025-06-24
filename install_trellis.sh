@@ -517,6 +517,7 @@ run_in_trellis_env() {
         export PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH'
         export SPCONV_ALGO='native'
         export CUDA_LAUNCH_BLOCKING=1
+        export PATH='$HOME/miniconda3/envs/trellis/bin:\$PATH'
         $cmd
     "
 }
@@ -643,11 +644,11 @@ install_pytorch_cuda() {
     
     # Upgrade pip in conda environment
     log "Upgrading pip and setuptools..."
-    run_in_trellis_env "pip install --upgrade pip setuptools wheel"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install --upgrade pip setuptools wheel"
     
     # Install compatible PyTorch version (2.5.1 instead of 2.6.0 for better compatibility)
     log "Installing PyTorch 2.5.1 with CUDA 12.4 support for better package compatibility..."
-    run_in_trellis_env "pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
     
     # Verify PyTorch CUDA installation
     log "Verifying PyTorch CUDA installation..."
