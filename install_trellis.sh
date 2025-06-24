@@ -57,6 +57,38 @@ ask_yes_no() {
     done
 }
 
+# Set up CUDA environment variables globally
+setup_cuda_environment() {
+    # Check if CUDA is already in PATH
+    if command -v nvcc >/dev/null 2>&1; then
+        info "CUDA already available in PATH"
+        return 0
+    fi
+    
+    # Try to find CUDA installation and add to PATH
+    local cuda_found=false
+    for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
+        if [ -f "$cuda_path/bin/nvcc" ]; then
+            info "Found CUDA at: $cuda_path"
+            export PATH="$cuda_path/bin:$PATH"
+            export CUDA_HOME="$cuda_path"
+            export LD_LIBRARY_PATH="$cuda_path/lib64:$LD_LIBRARY_PATH"
+            cuda_found=true
+            break
+        fi
+    done
+    
+    if [ "$cuda_found" = false ]; then
+        warn "No CUDA installation found in common locations"
+        warn "CUDA toolkit may need to be installed separately"
+    else
+        info "CUDA environment variables set:"
+        info "  CUDA_HOME: $CUDA_HOME"
+        info "  PATH: CUDA bin directory added"
+        info "  LD_LIBRARY_PATH: CUDA lib64 directory added"
+    fi
+}
+
 # Check if running as root
 check_root() {
     if [[ $EUID -eq 0 ]]; then
@@ -597,6 +629,18 @@ install_pytorch_cuda() {
     info "Python version: $(conda run -n trellis python --version)"
     info "Python path: $(conda run -n trellis which python)"
     
+    # Ensure pip is installed and available in the conda environment
+    log "Installing pip in conda environment..."
+    conda run -n trellis conda install -c conda-forge pip -y
+    
+    # Verify pip is now available
+    if ! conda run -n trellis which pip >/dev/null 2>&1; then
+        error "Failed to install pip in conda environment"
+        exit 1
+    fi
+    
+    info "pip is available at: $(conda run -n trellis which pip)"
+    
     # Upgrade pip in conda environment
     log "Upgrading pip and setuptools..."
     run_in_trellis_env "pip install --upgrade pip setuptools wheel"
@@ -687,9 +731,26 @@ install_trellis_deps() {
     # Set up CUDA environment variables permanently
     setup_cuda_env_vars
     
+    # Define CUDA environment variables for this session
+    local cuda_path=""
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_path="/usr/local/cuda-12.4"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        cuda_path="/usr/local/cuda-11.8"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+        cuda_path="/usr/local/cuda-12.2"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda/bin" ]; then
+        cuda_path="/usr/local/cuda"
+        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
+    fi
+    
     info "Using conda environment: trellis"
     info "Python version: $(conda run -n trellis python --version)"
     info "Python path: $(conda run -n trellis which python)"
+    info "CUDA path: $cuda_path"
     
     # Verify CUDA environment is properly set
     log "Verifying CUDA environment in conda environment..."
@@ -1081,6 +1142,7 @@ main() {
     
     check_and_install_sudo
     check_root
+    setup_cuda_environment
     update_system
     install_essential_packages
     install_basic_deps
