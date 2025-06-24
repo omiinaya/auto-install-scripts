@@ -76,7 +76,7 @@ update_system() {
 # Install basic dependencies
 install_basic_deps() {
     log "Installing basic dependencies..."
-    sudo apt install -y \
+    apt install -y \
         sudo \
         curl \
         wget \
