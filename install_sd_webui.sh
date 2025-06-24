@@ -208,8 +208,7 @@ install_system_libraries() {
         libgcc-s1 \
         libc6-dev \
         zlib1g-dev \
-        libglib2.0-0 \
-        libgperftools0
+        libglib2.0-0
 }
 
 # Install multimedia and graphics libraries
@@ -244,21 +243,36 @@ install_python() {
         return 0
     fi
     
-    # Add deadsnakes PPA for Python 3.10
-    sudo add-apt-repository ppa:deadsnakes/ppa -y
-    sudo apt update
+    # Check if Python 3.10 is available in Debian 12 repositories
+    if apt-cache search python3.10 | grep -q "^python3\.10$"; then
+        info "Python 3.10 available in Debian 12 repositories"
+        sudo apt install -y python3.10 python3.10-venv python3.10-dev python3-pip
+    else
+        # If not available, try Python 3.11 which should be available
+        info "Python 3.10 not available, trying Python 3.11..."
+        if apt-cache search python3.11 | grep -q "^python3\.11$"; then
+            sudo apt install -y python3.11 python3.11-venv python3.11-dev python3-pip
+            # Create symlink for python3.11 as python3.10 for compatibility
+            sudo ln -sf /usr/bin/python3.11 /usr/bin/python3.10
+        else
+            # Fallback to system Python 3
+            warn "Python 3.10/3.11 not available, using system Python 3"
+            sudo apt install -y python3 python3-venv python3-dev python3-pip
+            # Create symlink for system python3 as python3.10
+            sudo ln -sf /usr/bin/python3 /usr/bin/python3.10
+        fi
+    fi
     
-    # Install Python 3.10 and pip
-    sudo apt install -y python3.10 python3.10-venv python3.10-dev python3-pip
-    
-    # Create symlink for python3.10 as python3
+    # Verify Python installation
     if [ ! -f /usr/bin/python3.10 ]; then
         error "Python 3.10 installation failed"
         exit 1
     fi
     
-    # Install pip for Python 3.10
-    curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+    # Install pip for Python 3.10 if not already installed
+    if ! command -v pip3 >/dev/null 2>&1; then
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python3.10
+    fi
     
     log "Python 3.10 installed successfully"
 }
