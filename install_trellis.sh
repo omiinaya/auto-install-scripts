@@ -175,7 +175,9 @@ install_basic_deps() {
         tree \
         rsync \
         openssh-client \
-        locales
+        locales \
+        util-linux \
+        getopt
 }
 
 # Install system libraries required for TRELLIS
@@ -838,9 +840,52 @@ install_trellis_deps() {
     
     # Install cuDNN via conda (since it's not available as system package on Debian 12)
     info "Installing cuDNN via conda..."
-    run_in_trellis_env "conda install -c conda-forge cudnn -y" || warn "cuDNN conda installation failed, but may not be strictly required"
+    run_in_trellis_env "$HOME/miniconda3/bin/conda install -c conda-forge cudnn -y" || warn "cuDNN conda installation failed, but may not be strictly required"
     
     log "TRELLIS dependencies installed successfully"
+}
+
+# Retry installation of CUDA-dependent packages
+retry_cuda_dependent_installations() {
+    log "Retrying installation of CUDA-dependent packages..."
+    
+    # Check if CUDA toolkit is now available
+    if ! command -v nvcc >/dev/null 2>&1; then
+        warn "CUDA toolkit still not available, skipping CUDA-dependent package retry"
+        return 0
+    fi
+    
+    info "CUDA toolkit is available, retrying failed installations..."
+    
+    # Set up CUDA environment variables
+    local cuda_env_vars=""
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
+    fi
+    
+    # Retry flash-attn installation
+    info "Retrying flash-attn installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation still failed"
+    
+    # Retry spconv installation
+    info "Retrying spconv installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation still failed"
+    
+    # Retry mip-splatting installation
+    info "Retrying mip-splatting installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation still failed"
+    
+    # Retry nvdiffrast installation
+    info "Retrying nvdiffrast installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation still failed"
+    
+    log "CUDA-dependent package retry completed"
 }
 
 # Create launcher script
@@ -1203,6 +1248,144 @@ check_cuda_toolkit() {
     log "CUDA toolkit check completed"
 }
 
+# Install missing CUDA toolkit components
+install_cuda_toolkit_components() {
+    log "Installing missing CUDA toolkit components..."
+    
+    # Check if CUDA toolkit is already installed
+    if command -v nvcc >/dev/null 2>&1; then
+        info "CUDA toolkit already available"
+        return 0
+    fi
+    
+    # Check what CUDA packages are installed
+    local cuda_packages=$(dpkg -l | grep cuda | grep -v "^rc" | wc -l)
+    if [ "$cuda_packages" -gt 0 ]; then
+        info "Found $cuda_packages CUDA packages installed"
+        dpkg -l | grep cuda | grep -v "^rc" | head -5
+    fi
+    
+    # Install CUDA toolkit if not present
+    if ! dpkg -l | grep -q "cuda-toolkit"; then
+        warn "CUDA toolkit not found. Installing..."
+        
+        # Add NVIDIA repository if not already added
+        if [ ! -f "/etc/apt/sources.list.d/cuda.list" ]; then
+            info "Adding NVIDIA CUDA repository..."
+            curl -fSsl -O https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
+            sudo dpkg -i cuda-keyring_1.1-1_all.deb
+            rm -f cuda-keyring_1.1-1_all.deb
+            sudo apt update
+        fi
+        
+        # Install CUDA toolkit
+        info "Installing CUDA toolkit..."
+        sudo apt install -y \
+            cuda-toolkit-12-4 \
+            cuda-compiler-12-4 \
+            cuda-libraries-dev-12-4 \
+            cuda-driver-dev-12-4
+        
+        # Set up environment variables
+        info "Setting up CUDA environment variables..."
+        echo 'export PATH="/usr/local/cuda-12.4/bin:$PATH"' | sudo tee -a /etc/environment
+        echo 'export CUDA_HOME="/usr/local/cuda-12.4"' | sudo tee -a /etc/environment
+        echo 'export LD_LIBRARY_PATH="/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH"' | sudo tee -a /etc/environment
+        
+        # Create symlink for default CUDA
+        if [ ! -L "/usr/local/cuda" ]; then
+            sudo ln -sf /usr/local/cuda-12.4 /usr/local/cuda
+        fi
+        
+        log "CUDA toolkit installed successfully"
+    else
+        info "CUDA toolkit packages are installed"
+        
+        # Check if nvcc is available
+        if ! command -v nvcc >/dev/null 2>&1; then
+            warn "nvcc not found in PATH, checking common locations..."
+            
+            # Find CUDA installation
+            for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
+                if [ -f "$cuda_path/bin/nvcc" ]; then
+                    info "Found nvcc at: $cuda_path/bin/nvcc"
+                    # Add to PATH for current session
+                    export PATH="$cuda_path/bin:$PATH"
+                    export CUDA_HOME="$cuda_path"
+                    export LD_LIBRARY_PATH="$cuda_path/lib64:$LD_LIBRARY_PATH"
+                    
+                    # Add to system environment
+                    echo "export PATH=\"$cuda_path/bin:\$PATH\"" | sudo tee -a /etc/environment
+                    echo "export CUDA_HOME=\"$cuda_path\"" | sudo tee -a /etc/environment
+                    echo "export LD_LIBRARY_PATH=\"$cuda_path/lib64:\$LD_LIBRARY_PATH\"" | sudo tee -a /etc/environment
+                    break
+                fi
+            done
+        fi
+    fi
+    
+    # Verify installation
+    if command -v nvcc >/dev/null 2>&1; then
+        NVCC_VERSION=$(nvcc --version | grep "release" | awk '{print $6}' | cut -c2-)
+        log "CUDA toolkit verified: nvcc version $NVCC_VERSION"
+    else
+        warn "CUDA toolkit installation may be incomplete"
+        warn "Some CUDA-dependent packages may fail to compile"
+    fi
+}
+
+# Install additional CUDA development dependencies
+install_cuda_dev_deps() {
+    log "Installing additional CUDA development dependencies..."
+    
+    sudo apt install -y \
+        gcc-12 \
+        g++-12 \
+        make \
+        cmake \
+        ninja-build \
+        pkg-config \
+        libgl1-mesa-dev \
+        libglu1-mesa-dev \
+        freeglut3-dev \
+        libxrandr-dev \
+        libxinerama-dev \
+        libxcursor-dev \
+        libxi-dev \
+        libxext-dev \
+        libxfixes-dev \
+        libxrender-dev \
+        libxss-dev \
+        libxxf86vm-dev \
+        libxrandr-dev \
+        libasound2-dev \
+        libpulse-dev \
+        libdbus-1-dev \
+        libudev-dev \
+        libevdev-dev \
+        libmtdev-dev \
+        libts-dev \
+        libxkbcommon-dev \
+        libdrm-dev \
+        libgbm-dev \
+        libegl1-mesa-dev \
+        libgles2-mesa-dev \
+        libvulkan-dev \
+        vulkan-tools \
+        vulkan-validationlayers \
+        libvulkan1 \
+        libvulkan1:i386 \
+        libglvnd0 \
+        libgl1 \
+        libglx0 \
+        libegl1 \
+        libgles2 \
+        libglvnd-dev \
+        libgl1-mesa-dev \
+        libegl1-mesa-dev \
+        libgles2-mesa-dev
+}
+
 # Main installation function
 main() {
     echo "=================================="
@@ -1242,12 +1425,15 @@ main() {
     install_graphics_libs
     install_python
     install_nvidia_drivers
+    install_cuda_toolkit_components
+    install_cuda_dev_deps
     install_conda
     create_conda_env
     clone_trellis
     check_cuda_toolkit
     install_pytorch_cuda
     install_trellis_deps
+    retry_cuda_dependent_installations
     create_launcher
     create_systemd_service
     test_installation
