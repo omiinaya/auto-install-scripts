@@ -125,144 +125,62 @@ install_python() {
     info "Skipping global pip upgrade (will upgrade in virtual environment)"
 }
 
-# Install NVIDIA drivers for Proxmox container
+# Install NVIDIA drivers using standalone module
 install_nvidia_drivers() {
-    log "Installing NVIDIA drivers for Proxmox container..."
+    log "Installing NVIDIA drivers using standalone module..."
     
-    # Add NVIDIA CUDA repository
-    info "Adding NVIDIA CUDA repository..."
-    curl -fSsl -O https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
-    sudo dpkg -i cuda-keyring_1.1-1_all.deb
+    # Download and run the standalone NVIDIA driver installer
+    info "Downloading NVIDIA driver installer from GitHub..."
     
-    # Update package list
-    sudo apt update
+    # You can set NVIDIA_INSTALLER_URL environment variable to use a custom URL
+    NVIDIA_INSTALLER_URL="${NVIDIA_INSTALLER_URL:-https://raw.githubusercontent.com/USER/REPO/main/install_nvidia_drivers.sh}"
     
-    # Install NVIDIA drivers
-    info "Installing NVIDIA drivers..."
-    sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
+    # Create temporary directory for the installer
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
     
-    # Reconfigure NVIDIA kernel DKMS
-    sudo dpkg-reconfigure nvidia-kernel-dkms
+    # Download and execute the installer script
+    if curl -fSsl -o install_nvidia_drivers.sh "$NVIDIA_INSTALLER_URL"; then
+        chmod +x install_nvidia_drivers.sh
+        info "Running NVIDIA driver installer..."
+        ./install_nvidia_drivers.sh
+        log "NVIDIA drivers installation completed"
+    else
+        error "Failed to download NVIDIA driver installer from GitHub. Please check your internet connection or install NVIDIA drivers manually."
+    fi
     
     # Clean up
-    rm -f cuda-keyring_1.1-1_all.deb
-    
-    log "NVIDIA drivers installed successfully"
+    cd - > /dev/null
+    rm -rf "$TEMP_DIR"
 }
 
-# Install nvcc compiler
+# Install CUDA toolkit and nvcc using standalone module
 install_nvcc() {
-    log "Ensuring nvcc compiler is installed..."
+    log "Installing CUDA toolkit and nvcc using standalone module..."
     
-    # Check if nvcc is already available
-    if command -v nvcc >/dev/null 2>&1; then
-        info "nvcc already available at: $(which nvcc)"
-        nvcc --version | head -1
-        return 0
-    fi
+    # Download and run the standalone CUDA installer
+    info "Downloading CUDA installer from GitHub..."
     
-    info "nvcc not found, installing CUDA development tools..."
+    # You can set CUDA_INSTALLER_URL environment variable to use a custom URL
+    CUDA_INSTALLER_URL="${CUDA_INSTALLER_URL:-https://raw.githubusercontent.com/USER/REPO/main/install_cuda_nvcc.sh}"
     
-    # Install comprehensive CUDA development packages
-    sudo apt update
+    # Create temporary directory for the installer
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
     
-    # First try the standard CUDA packages that should be available
-    info "Attempting to install CUDA toolkit packages..."
-    sudo apt install -y \
-        cuda-toolkit-12-6 \
-        cuda-compiler-12-6 \
-        cuda-nvcc-12-6 \
-        cuda-toolkit-config-common \
-        cuda-runtime-12-6 \
-        cuda-drivers || warn "Some primary CUDA packages could not be installed"
-    
-    # If that fails, try installing the full CUDA toolkit
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Primary packages failed, trying full CUDA installation..."
-        sudo apt install -y cuda || warn "Full CUDA installation failed"
-    fi
-    
-    # If still no nvcc, try alternative approaches
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Trying alternative CUDA package names..."
-        sudo apt install -y \
-            cuda-toolkit \
-            cuda-nvcc \
-            cuda-compiler \
-            libcuda1 \
-            libcudart12 || warn "Alternative CUDA packages failed"
-    fi
-    
-    # Last resort: try to install from nvidia-cuda-toolkit if available
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Trying nvidia-cuda-toolkit as last resort..."
-        sudo apt install -y nvidia-cuda-toolkit || warn "nvidia-cuda-toolkit not available"
-    fi
-    
-    # Refresh PATH to pick up newly installed binaries
-    export PATH="/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/local/cuda-12/bin:/usr/local/cuda-12.6/bin:/usr/local/cuda-12.9/bin:$PATH"
-    hash -r
-    
-    # Search for nvcc in common locations (both /usr and /usr/local)
-    info "Searching for nvcc in the system..."
-    NVCC_LOCATION=""
-    
-    # Check common CUDA installation paths
-    for cuda_path in /usr/local/cuda-12.9/bin/nvcc /usr/local/cuda-12.6/bin/nvcc /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda-12/bin/nvcc /usr/local/cuda/bin/nvcc; do
-        if [ -f "$cuda_path" ]; then
-            NVCC_LOCATION="$cuda_path"
-            info "Found nvcc at: $NVCC_LOCATION"
-            break
-        fi
-    done
-    
-    # If not found in common locations, search broadly
-    if [ -z "$NVCC_LOCATION" ]; then
-        NVCC_LOCATION=$(find /usr -name nvcc -type f 2>/dev/null | head -1)
-        if [ -n "$NVCC_LOCATION" ]; then
-            info "Found nvcc at: $NVCC_LOCATION"
-        fi
-    fi
-    
-    # Set up nvcc globally if found
-    if [ -n "$NVCC_LOCATION" ]; then
-        # Create symlink in /usr/local/bin (which is in everyone's PATH)
-        sudo ln -sf "$NVCC_LOCATION" /usr/local/bin/nvcc
-        info "Created global symlink: /usr/local/bin/nvcc -> $NVCC_LOCATION"
-        
-        # Also create symlinks for other CUDA tools if they exist
-        NVCC_DIR=$(dirname "$NVCC_LOCATION")
-        for tool in nvprof nsight-compute nsight-systems; do
-            if [ -f "$NVCC_DIR/$tool" ]; then
-                sudo ln -sf "$NVCC_DIR/$tool" "/usr/local/bin/$tool"
-                info "Created symlink: /usr/local/bin/$tool"
-            fi
-        done
-        
-        # Add the CUDA bin directory to system PATH permanently
-        CUDA_HOME=$(dirname "$NVCC_DIR")
-        sudo tee /etc/profile.d/cuda.sh > /dev/null << EOF
-# CUDA tools PATH (added by ComfyUI installer)
-export PATH="$NVCC_DIR:\$PATH"
-export CUDA_HOME="$CUDA_HOME"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:\$LD_LIBRARY_PATH"
-EOF
-        info "Created /etc/profile.d/cuda.sh for system-wide CUDA environment"
-        info "CUDA_HOME set to: $CUDA_HOME"
-        
-        # Verify the symlink works
-        if command -v nvcc >/dev/null 2>&1; then
-            log "nvcc successfully configured at: $(which nvcc)"
-            nvcc --version | head -1
-        else
-            warn "nvcc symlink created but not immediately available"
-            info "Run 'source /etc/profile.d/cuda.sh' or restart your shell"
-        fi
+    # Download and execute the installer script
+    if curl -fSsl -o install_cuda_nvcc.sh "$CUDA_INSTALLER_URL"; then
+        chmod +x install_cuda_nvcc.sh
+        info "Running CUDA installer..."
+        ./install_cuda_nvcc.sh
+        log "CUDA toolkit installation completed"
     else
-        warn "Could not find nvcc anywhere in the system"
-        warn "CUDA development tools may not be properly installed"
-        info "You may need to install CUDA toolkit manually"
+        error "Failed to download CUDA installer from GitHub. Please check your internet connection or install CUDA toolkit manually."
     fi
+    
+    # Clean up
+    cd - > /dev/null
+    rm -rf "$TEMP_DIR"
 }
 
 # Create virtual environment
