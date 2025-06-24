@@ -280,78 +280,27 @@ install_python() {
 
 # Install NVIDIA drivers and CUDA
 install_nvidia_drivers() {
-    log "Checking NVIDIA GPU and drivers..."
+    log "Installing NVIDIA drivers for Proxmox container..."
     
-    # Check if NVIDIA GPU is present
-    if ! lspci | grep -i nvidia >/dev/null 2>&1; then
-        warn "No NVIDIA GPU detected. Stable Diffusion WebUI may run on CPU only."
-        if ! ask_yes_no "Continue with CPU-only installation?" "y"; then
-            exit 1
-        fi
-        return 0
-    fi
+    # Add NVIDIA CUDA repository
+    info "Adding NVIDIA CUDA repository..."
+    curl -fSsl -O https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
+    sudo dpkg -i cuda-keyring_1.1-1_all.deb
     
-    info "NVIDIA GPU detected"
+    # Update package list
+    sudo apt update
     
-    # Check if NVIDIA drivers are already installed
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        info "NVIDIA drivers already installed"
-        nvidia-smi
-        return 0
-    fi
+    # Install NVIDIA drivers
+    info "Installing NVIDIA drivers..."
+    sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
     
-    if ask_yes_no "Install NVIDIA drivers and CUDA toolkit?" "y"; then
-        log "Installing NVIDIA drivers and CUDA toolkit..."
-        
-        # Install NVIDIA drivers for Debian 12
-        info "Installing NVIDIA drivers for Debian 12..."
-        
-        # Add non-free repository for NVIDIA drivers
-        sudo apt install -y software-properties-common
-        sudo apt update
-        
-        # Install NVIDIA drivers (Proxmox container approach)
-        sudo apt install -y nvidia-driver nvidia-smi
-        
-        # Install CUDA toolkit
-        info "Installing CUDA toolkit..."
-        
-        # Add NVIDIA CUDA repository for Debian
-        wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
-        sudo dpkg -i cuda-keyring_1.1-1_all.deb
-        sudo apt update
-        
-        # Install CUDA toolkit
-        sudo apt install -y cuda-toolkit-12-4
-        
-        # Install cuDNN
-        sudo apt install -y libcudnn8
-        
-        # Verify installation
-        if command -v nvidia-smi >/dev/null 2>&1; then
-            log "NVIDIA drivers installed successfully"
-            nvidia-smi
-        else
-            warn "NVIDIA drivers may not be properly installed"
-            warn "This is normal in Proxmox containers - GPU passthrough may be required"
-        fi
-        
-        if command -v nvcc >/dev/null 2>&1; then
-            log "CUDA toolkit installed successfully"
-            nvcc --version
-        else
-            warn "CUDA toolkit may not be properly installed"
-        fi
-        
-        log "NVIDIA drivers and CUDA toolkit installation completed"
-        info "If running in Proxmox, ensure GPU passthrough is properly configured"
-        
-        if ask_yes_no "Reboot now to complete driver installation?" "n"; then
-            sudo reboot
-        fi
-    else
-        warn "Skipping NVIDIA driver installation. Stable Diffusion WebUI may not work optimally."
-    fi
+    # Reconfigure NVIDIA kernel DKMS
+    sudo dpkg-reconfigure nvidia-kernel-dkms
+    
+    # Clean up
+    rm -f cuda-keyring_1.1-1_all.deb
+    
+    log "NVIDIA drivers installed successfully"
 }
 
 # Install Miniconda
