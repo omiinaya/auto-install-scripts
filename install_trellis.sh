@@ -877,6 +877,12 @@ retry_cuda_dependent_installations() {
     
     info "CUDA toolkit is available, retrying failed installations..."
     
+    # Ensure getopt is available in conda environment
+    if ! run_in_trellis_env "which getopt" 2>/dev/null; then
+        warn "getopt not found in conda environment, installing..."
+        install_getopt_in_conda
+    fi
+    
     # Set up CUDA environment variables
     local cuda_env_vars=""
     if [ -d "/usr/local/cuda-12.4/bin" ]; then
@@ -1463,6 +1469,36 @@ install_cuda_dev_deps() {
         libgles2-mesa-dev
 }
 
+# Install getopt in conda environment
+install_getopt_in_conda() {
+    log "Installing getopt in conda environment..."
+    
+    # Try to install util-linux via conda-forge
+    run_in_trellis_env "$HOME/miniconda3/bin/conda install -c conda-forge util-linux -y" || warn "Failed to install util-linux via conda"
+    
+    # Alternative: try to copy getopt from system if available
+    if command -v getopt >/dev/null 2>&1; then
+        info "Copying getopt from system to conda environment..."
+        local getopt_path=$(which getopt)
+        local conda_bin="$HOME/miniconda3/envs/trellis/bin"
+        
+        if [ -f "$getopt_path" ] && [ -d "$conda_bin" ]; then
+            cp "$getopt_path" "$conda_bin/" || warn "Failed to copy getopt to conda environment"
+            chmod +x "$conda_bin/getopt" || warn "Failed to make getopt executable in conda environment"
+            info "getopt copied to conda environment: $conda_bin/getopt"
+        fi
+    else
+        warn "getopt not found on system level"
+    fi
+    
+    # Verify getopt is available in conda environment
+    if run_in_trellis_env "which getopt" 2>/dev/null; then
+        log "getopt is now available in conda environment"
+    else
+        warn "getopt still not available in conda environment"
+    fi
+}
+
 # Main installation function
 main() {
     echo "=================================="
@@ -1506,6 +1542,7 @@ main() {
     install_cuda_dev_deps
     install_conda
     create_conda_env
+    install_getopt_in_conda
     clone_trellis
     check_cuda_toolkit
     install_pytorch_cuda
