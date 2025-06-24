@@ -597,11 +597,24 @@ verify_cuda_installation() {
         done
         
         if [ "$cuda_found" = false ]; then
-            error "CUDA toolkit not found! This is required for compiling CUDA extensions."
-            echo "Please install CUDA toolkit with:"
+            warn "CUDA toolkit not found in common locations!"
+            warn "This might be because:"
+            warn "  1. CUDA toolkit is not installed"
+            warn "  2. CUDA is installed in a non-standard location"
+            warn "  3. CUDA installation is incomplete"
+            echo
+            info "Checking if CUDA packages are installed..."
+            if dpkg -l | grep -q cuda; then
+                info "CUDA packages found in system:"
+                dpkg -l | grep cuda | head -10
+            else
+                warn "No CUDA packages found in system"
+            fi
+            echo
+            warn "TRELLIS will continue installation, but CUDA compilation may fail."
+            warn "You may need to install CUDA toolkit manually:"
             echo "  sudo apt install cuda-toolkit-12-4"
-            echo "Or run the script again and choose 'y' when asked about NVIDIA drivers."
-            exit 1
+            echo "  or run the script again and choose 'y' when asked about NVIDIA drivers."
         fi
     fi
     
@@ -756,7 +769,12 @@ install_trellis_deps() {
     
     # Verify CUDA environment is properly set
     log "Verifying CUDA environment in conda environment..."
-    run_in_trellis_env "echo 'CUDA_HOME:' \$CUDA_HOME && echo 'nvcc version:' && nvcc --version"
+    run_in_trellis_env "echo 'CUDA_HOME:' \$CUDA_HOME && echo 'nvcc version:' && nvcc --version" || warn "nvcc not found in conda environment, but CUDA_HOME is set"
+    
+    # Additional CUDA verification
+    log "Additional CUDA verification..."
+    run_in_trellis_env "echo 'Checking CUDA installation...' && ls -la \$CUDA_HOME/bin/nvcc 2>/dev/null || echo 'nvcc not found at expected location'"
+    run_in_trellis_env "echo 'Checking CUDA libraries...' && ls -la \$CUDA_HOME/lib64/libcuda* 2>/dev/null | head -5 || echo 'CUDA libraries not found'"
     
     # Make setup script executable
     run_in_trellis_env "cd '$HOME/TRELLIS' && chmod +x setup.sh"
@@ -772,28 +790,28 @@ install_trellis_deps() {
     run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
     
     info "Installing flash-attn..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation failed, continuing with other dependencies"
     
     info "Installing diffoctreerast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --diffoctreerast"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --diffoctreerast" || warn "Diffoctreerast installation failed, continuing with other dependencies"
     
     info "Installing spconv..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation failed, continuing with other dependencies"
     
     info "Installing mip-splatting..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation failed, continuing with other dependencies"
     
     info "Installing kaolin (compatible version for PyTorch 2.5.1)..."
     # Install kaolin using pip with compatible PyTorch version
-    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html" || warn "Kaolin installation failed, trying alternative method"
     # Also try the original setup script in case there are additional dependencies
     run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
     
     info "Installing nvdiffrast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation failed, continuing with other dependencies"
     
     info "Installing demo dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --demo"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --demo" || warn "Demo dependencies installation failed, continuing with other dependencies"
     
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
@@ -1113,6 +1131,59 @@ print_instructions() {
     echo
 }
 
+# Check CUDA toolkit installation status
+check_cuda_toolkit() {
+    log "Checking CUDA toolkit installation status..."
+    
+    # Check if CUDA toolkit packages are installed
+    local cuda_packages_installed=false
+    if dpkg -l | grep -q "cuda-toolkit"; then
+        info "CUDA toolkit packages found:"
+        dpkg -l | grep "cuda-toolkit" | head -5
+        cuda_packages_installed=true
+    fi
+    
+    # Check if nvcc is available
+    local nvcc_available=false
+    if command -v nvcc >/dev/null 2>&1; then
+        info "nvcc is available in PATH"
+        nvcc_available=true
+    else
+        warn "nvcc is not available in PATH"
+    fi
+    
+    # Check common CUDA installation paths
+    local cuda_paths_found=()
+    for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
+        if [ -d "$cuda_path" ] && [ -f "$cuda_path/bin/nvcc" ]; then
+            cuda_paths_found+=("$cuda_path")
+            info "Found CUDA installation at: $cuda_path"
+        fi
+    done
+    
+    if [ ${#cuda_paths_found[@]} -eq 0 ]; then
+        warn "No CUDA installations found in common locations"
+    fi
+    
+    # Provide recommendations
+    if [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = false ]; then
+        warn "CUDA toolkit appears to be missing or incomplete"
+        echo
+        info "To install CUDA toolkit, you can:"
+        echo "  1. Run this script again and choose 'y' when asked about NVIDIA drivers"
+        echo "  2. Install manually: sudo apt install cuda-toolkit-12-4"
+        echo "  3. Download from NVIDIA website: https://developer.nvidia.com/cuda-downloads"
+        echo
+        warn "TRELLIS will continue installation, but CUDA compilation may fail."
+        warn "Some packages may need to be compiled from source without CUDA support."
+    elif [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = true ]; then
+        warn "CUDA packages are installed but nvcc is not in PATH"
+        info "This might be a PATH issue. CUDA_HOME will be set during installation."
+    fi
+    
+    log "CUDA toolkit check completed"
+}
+
 # Main installation function
 main() {
     echo "=================================="
@@ -1155,6 +1226,7 @@ main() {
     install_conda
     create_conda_env
     clone_trellis
+    check_cuda_toolkit
     install_pytorch_cuda
     install_trellis_deps
     create_launcher
