@@ -76,6 +76,14 @@ update_system() {
 # Install basic dependencies
 install_basic_deps() {
     log "Installing basic dependencies..."
+    
+    # First install sudo if not present (required for all subsequent operations)
+    if ! command -v sudo >/dev/null 2>&1; then
+        log "Installing sudo..."
+        apt update
+        apt install -y sudo
+    fi
+    
     sudo apt install -y \
         sudo \
         curl \
@@ -175,6 +183,61 @@ create_venv() {
     log "Virtual environment created at $VENV_DIR"
 }
 
+# Setup CUDA environment variables
+setup_cuda_environment() {
+    log "Setting up CUDA environment variables..."
+    
+    # Find CUDA installation path
+    CUDA_PATH=""
+    for path in /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda /opt/cuda; do
+        if [ -d "$path" ]; then
+            CUDA_PATH="$path"
+            break
+        fi
+    done
+    
+    if [ -z "$CUDA_PATH" ]; then
+        warn "CUDA installation not found in standard locations"
+        info "Installing CUDA toolkit..."
+        sudo apt install -y nvidia-cuda-toolkit cuda-toolkit-12-6 || warn "Could not install CUDA toolkit"
+        
+        # Try to find CUDA again
+        for path in /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda /opt/cuda; do
+            if [ -d "$path" ]; then
+                CUDA_PATH="$path"
+                break
+            fi
+        done
+    fi
+    
+    if [ -n "$CUDA_PATH" ]; then
+        info "Found CUDA at: $CUDA_PATH"
+        
+        # Set environment variables for current session
+        export CUDA_HOME="$CUDA_PATH"
+        export CUDA_ROOT="$CUDA_PATH"
+        export PATH="$CUDA_PATH/bin:$PATH"
+        export LD_LIBRARY_PATH="$CUDA_PATH/lib64:$LD_LIBRARY_PATH"
+        
+        # Add to user's bashrc for persistence
+        if ! grep -q "CUDA_HOME" "$HOME/.bashrc"; then
+            info "Adding CUDA environment variables to ~/.bashrc"
+            cat >> "$HOME/.bashrc" << EOF
+
+# CUDA Environment Variables (added by FramePack installer)
+export CUDA_HOME="$CUDA_PATH"
+export CUDA_ROOT="$CUDA_PATH"
+export PATH="$CUDA_PATH/bin:\$PATH"
+export LD_LIBRARY_PATH="$CUDA_PATH/lib64:\$LD_LIBRARY_PATH"
+EOF
+        fi
+        
+        log "CUDA environment variables configured"
+    else
+        warn "Could not locate CUDA installation. Some features may not work."
+    fi
+}
+
 # Install PyTorch with CUDA 12.6 support (FramePack requirement)
 install_pytorch_cuda() {
     log "Installing PyTorch with CUDA 12.6 support..."
@@ -182,7 +245,14 @@ install_pytorch_cuda() {
     # Ensure we're in the virtual environment
     source "$HOME/framepack-env/bin/activate"
     
+    # Ensure pip is available
+    if ! command -v pip >/dev/null 2>&1; then
+        python -m ensurepip --default-pip
+        pip install --upgrade pip
+    fi
+    
     # Install PyTorch with CUDA 12.6 support (as specified in FramePack docs)
+    # Install all three together to avoid version conflicts
     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
     
     log "PyTorch with CUDA 12.6 support installed"
@@ -239,6 +309,16 @@ install_attention_kernels() {
     
     if ask_yes_no "Do you want to install flash-attention?" "n"; then
         info "Installing flash-attention..."
+        
+        # Check if CUDA environment is properly set
+        if [ -z "$CUDA_HOME" ]; then
+            warn "CUDA_HOME not set. Setting up CUDA environment first..."
+            # Source bashrc to get CUDA variables
+            source "$HOME/.bashrc" 2>/dev/null || true
+        fi
+        
+        # Install with proper CUDA environment
+        CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}" \
         pip install flash-attn --no-build-isolation || warn "Failed to install flash-attention, continuing without it"
     fi
 }
@@ -553,6 +633,7 @@ main() {
     install_basic_deps
     install_python
     install_nvidia_drivers
+    setup_cuda_environment
     create_venv
     install_pytorch_cuda
     install_framepack
