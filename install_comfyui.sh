@@ -477,6 +477,43 @@ EOF
     log "Systemd service created. You can start it with: sudo systemctl start comfyui"
 }
 
+# Verify and fix comfy-cli installation
+verify_comfy_cli() {
+    log "Verifying comfy-cli installation..."
+    
+    # Activate virtual environment
+    source "$HOME/comfy-env/bin/activate"
+    
+    # Check if comfy command works
+    if command -v comfy >/dev/null 2>&1; then
+        info "comfy-cli is working correctly"
+        comfy --version
+        return 0
+    fi
+    
+    warn "comfy command not found, attempting to fix..."
+    
+    # Try to install/reinstall comfy-cli
+    info "Installing comfy-cli..."
+    if pip install comfy-cli; then
+        info "comfy-cli installed successfully"
+    else
+        warn "Failed to install comfy-cli via pip"
+        return 1
+    fi
+    
+    # Test again
+    if command -v comfy >/dev/null 2>&1; then
+        log "comfy-cli is now working!"
+        comfy --version
+        return 0
+    else
+        warn "comfy command still not available after installation"
+        info "You may need to restart your shell or check your PATH"
+        return 1
+    fi
+}
+
 # Test installation
 test_installation() {
     log "Testing installation..."
@@ -495,11 +532,59 @@ test_installation() {
         warn "CUDA is not available. GPU acceleration may not work."
     fi
     
-    # Test comfy-cli
-    info "Testing comfy-cli..."
-    comfy --version
+    # Verify comfy-cli
+    verify_comfy_cli
     
     log "Installation test completed successfully!"
+}
+
+# Download essential models
+download_essential_models() {
+    log "Downloading essential models..."
+    
+    if ! ask_yes_no "Do you want to download essential models (SD 1.5, SDXL, VAE)? This will take several GB of space." "y"; then
+        info "Skipping model download. You can download models manually later."
+        return 0
+    fi
+    
+    # Activate virtual environment
+    source "$HOME/comfy-env/bin/activate"
+    
+    # Create model directories
+    mkdir -p "$HOME/comfy/models/checkpoints"
+    mkdir -p "$HOME/comfy/models/vae"
+    
+    cd "$HOME/comfy/models/checkpoints"
+    
+    # Download SD 1.5 (the one causing the error)
+    info "Downloading Stable Diffusion 1.5..."
+    if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
+        log "SD 1.5 downloaded successfully"
+    else
+        warn "Failed to download SD 1.5 model"
+    fi
+    
+    # Download SDXL Base (optional)
+    if ask_yes_no "Do you want to download SDXL Base model? (6.6GB)" "n"; then
+        info "Downloading SDXL Base..."
+        if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
+            log "SDXL Base downloaded successfully"
+        else
+            warn "Failed to download SDXL Base model"
+        fi
+    fi
+    
+    # Download VAE
+    cd "$HOME/comfy/models/vae"
+    info "Downloading VAE model..."
+    if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
+        log "VAE model downloaded successfully"
+    else
+        warn "Failed to download VAE model"
+    fi
+    
+    log "Model download completed!"
+    info "Models are stored in: $HOME/comfy/models/"
 }
 
 # Print final instructions
@@ -573,6 +658,7 @@ main() {
     create_launcher
     create_systemd_service
     test_installation
+    download_essential_models
     print_instructions
 }
 
