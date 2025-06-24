@@ -208,8 +208,7 @@ install_system_libraries() {
         libgcc-s1 \
         libc6-dev \
         zlib1g-dev \
-        libglib2.0-0 \
-        libgperftools0
+        libglib2.0-0
 }
 
 # Install multimedia and graphics libraries
