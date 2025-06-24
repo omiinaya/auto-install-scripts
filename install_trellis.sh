@@ -279,7 +279,7 @@ install_python() {
     info "Skipping global pip upgrade (will upgrade in virtual environment)"
 }
 
-# Install NVIDIA drivers and CUDA toolkit for Proxmox container
+# Install NVIDIA drivers and CUDA toolkit for Proxmox container (updated for official requirements)
 install_nvidia_drivers() {
     if ! ask_yes_no "Do you want to install NVIDIA drivers and CUDA toolkit?" "y"; then
         warn "Skipping NVIDIA driver installation. GPU acceleration will not be available."
@@ -300,13 +300,41 @@ install_nvidia_drivers() {
     info "Installing NVIDIA drivers..."
     sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
     
-    # Install CUDA toolkit (needed for nvcc and development)
-    info "Installing CUDA toolkit..."
-    sudo apt install -y \
-        cuda-toolkit-12-4 \
-        cuda-compiler-12-4 \
-        cuda-libraries-dev-12-4 \
-        cuda-driver-dev-12-4
+    # Install CUDA toolkit (prefer CUDA 11.8 for official TRELLIS compatibility)
+    info "Installing CUDA toolkit 11.8 (official TRELLIS requirement)..."
+    if sudo apt install -y cuda-toolkit-11-8 cuda-compiler-11-8 cuda-libraries-dev-11-8 cuda-driver-dev-11-8; then
+        log "CUDA 11.8 installed successfully"
+        
+        # Set up CUDA environment globally
+        info "Setting up CUDA 11.8 environment..."
+        echo 'export PATH="/usr/local/cuda-11.8/bin:$PATH"' | sudo tee -a /etc/environment
+        echo 'export CUDA_HOME="/usr/local/cuda-11.8"' | sudo tee -a /etc/environment
+        echo 'export LD_LIBRARY_PATH="/usr/local/cuda-11.8/lib64:$LD_LIBRARY_PATH"' | sudo tee -a /etc/environment
+        
+        # Create symlink for default CUDA
+        if [ ! -L "/usr/local/cuda" ]; then
+            sudo ln -sf /usr/local/cuda-11.8 /usr/local/cuda
+        fi
+    else
+        warn "CUDA 11.8 installation failed, trying CUDA 12.2 as fallback..."
+        if sudo apt install -y cuda-toolkit-12-2 cuda-compiler-12-2 cuda-libraries-dev-12-2 cuda-driver-dev-12-2; then
+            log "CUDA 12.2 installed successfully"
+            
+            # Set up CUDA environment globally
+            info "Setting up CUDA 12.2 environment..."
+            echo 'export PATH="/usr/local/cuda-12.2/bin:$PATH"' | sudo tee -a /etc/environment
+            echo 'export CUDA_HOME="/usr/local/cuda-12.2"' | sudo tee -a /etc/environment
+            echo 'export LD_LIBRARY_PATH="/usr/local/cuda-12.2/lib64:$LD_LIBRARY_PATH"' | sudo tee -a /etc/environment
+            
+            # Create symlink for default CUDA
+            if [ ! -L "/usr/local/cuda" ]; then
+                sudo ln -sf /usr/local/cuda-12.2 /usr/local/cuda
+            fi
+        else
+            error "Failed to install CUDA toolkit. Please install manually."
+            exit 1
+        fi
+    fi
     
     # Note: cuDNN and NCCL are not available in NVIDIA repository for Debian 12
     # These will be installed via conda/pip in the Python environment instead
@@ -315,17 +343,6 @@ install_nvidia_drivers() {
     
     # Reconfigure NVIDIA kernel DKMS
     sudo dpkg-reconfigure nvidia-kernel-dkms
-    
-    # Set up CUDA environment globally
-    info "Setting up CUDA environment..."
-    echo 'export PATH="/usr/local/cuda-12.4/bin:$PATH"' | sudo tee -a /etc/environment
-    echo 'export CUDA_HOME="/usr/local/cuda-12.4"' | sudo tee -a /etc/environment
-    echo 'export LD_LIBRARY_PATH="/usr/local/cuda-12.4/lib64:$LD_LIBRARY_PATH"' | sudo tee -a /etc/environment
-    
-    # Create symlink for default CUDA
-    if [ ! -L "/usr/local/cuda" ]; then
-        sudo ln -sf /usr/local/cuda-12.4 /usr/local/cuda
-    fi
     
     # Clean up
     rm -f cuda-keyring_1.1-1_all.deb
@@ -389,58 +406,58 @@ create_conda_env() {
             # Still verify it has the right Python version
             conda activate "$ENV_NAME"
             ACTUAL_PYTHON_VERSION=$(python --version)
-            if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+            if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3."* ]]; then
                 error "Existing environment has wrong Python version: $ACTUAL_PYTHON_VERSION"
                 error "Removing and recreating..."
                 conda deactivate
                 conda env remove -n "$ENV_NAME" -y
             else
-                log "Existing environment verified with Python 3.10"
+                log "Existing environment verified with Python 3.8+"
                 return 0
             fi
         fi
     fi
     
-    # Force Python 3.10 installation with multiple attempts
-    info "Creating conda environment with Python 3.10..."
+    # Create Python 3.8+ environment (following official TRELLIS requirements)
+    info "Creating conda environment with Python 3.8+ (official TRELLIS requirement)..."
     
     # Initialize conda for this shell session
     source "$HOME/miniconda3/etc/profile.d/conda.sh"
     
-    # Method 1: Try explicit Python 3.10
-    log "Attempt 1: Creating environment with python=3.10"
-    if conda create -n "$ENV_NAME" python=3.10 -y; then
+    # Method 1: Try Python 3.8 (minimum requirement)
+    log "Attempt 1: Creating environment with python=3.8"
+    if conda create -n "$ENV_NAME" python=3.8 -y; then
         conda activate "$ENV_NAME"
         ACTUAL_PYTHON_VERSION=$(python --version)
         info "Created environment with: $ACTUAL_PYTHON_VERSION"
         
-        if [[ "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
-            log "Successfully created Python 3.10 environment"
+        if [[ "$ACTUAL_PYTHON_VERSION" == *"3.8"* ]] || [[ "$ACTUAL_PYTHON_VERSION" == *"3.9"* ]] || [[ "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]] || [[ "$ACTUAL_PYTHON_VERSION" == *"3.11"* ]]; then
+            log "Successfully created Python 3.8+ environment"
         else
             warn "Wrong Python version, trying method 2..."
             conda deactivate
             conda env remove -n "$ENV_NAME" -y
             
-            # Method 2: Try with explicit version constraint
-            log "Attempt 2: Creating environment with python=3.10.*"
-            if conda create -n "$ENV_NAME" python=3.10.* -y; then
+            # Method 2: Try with Python 3.9
+            log "Attempt 2: Creating environment with python=3.9"
+            if conda create -n "$ENV_NAME" python=3.9 -y; then
                 conda activate "$ENV_NAME"
                 ACTUAL_PYTHON_VERSION=$(python --version)
                 info "Created environment with: $ACTUAL_PYTHON_VERSION"
                 
-                if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
+                if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3."* ]]; then
                     conda deactivate
                     conda env remove -n "$ENV_NAME" -y
                     
-                    # Method 3: Force with conda-forge channel
-                    log "Attempt 3: Creating environment with conda-forge channel"
-                    conda create -n "$ENV_NAME" -c conda-forge python=3.10 -y
+                    # Method 3: Try with Python 3.10
+                    log "Attempt 3: Creating environment with python=3.10"
+                    conda create -n "$ENV_NAME" python=3.10 -y
                     conda activate "$ENV_NAME"
                     ACTUAL_PYTHON_VERSION=$(python --version)
                     info "Created environment with: $ACTUAL_PYTHON_VERSION"
                     
-                    if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3.10"* ]]; then
-                        error "All methods failed to create Python 3.10 environment"
+                    if [[ ! "$ACTUAL_PYTHON_VERSION" == *"3."* ]]; then
+                        error "All methods failed to create Python 3.8+ environment"
                         error "Your conda installation may need updating"
                         error "Try: conda update conda"
                         exit 1
@@ -466,12 +483,12 @@ create_conda_env() {
     info "  Python: $FINAL_PYTHON"
     info "  Path: $FINAL_PATH"
     
-    if [[ "$FINAL_ENV" != "$ENV_NAME" ]] || [[ ! "$FINAL_PYTHON" == *"3.10"* ]]; then
+    if [[ "$FINAL_ENV" != "$ENV_NAME" ]] || [[ ! "$FINAL_PYTHON" == *"3."* ]]; then
         error "Environment verification failed!"
         exit 1
     fi
     
-    # Install essential conda packages for Python 3.10
+    # Install essential conda packages
     log "Installing essential conda packages..."
     conda install -c conda-forge -y \
         pip \
@@ -491,7 +508,7 @@ create_conda_env() {
         packaging \
         cython
     
-    log "Conda environment '$ENV_NAME' created successfully with Python 3.10"
+    log "Conda environment '$ENV_NAME' created successfully with Python 3.8+"
 }
 
 # Helper function to run commands in the trellis conda environment
@@ -499,14 +516,14 @@ run_in_trellis_env() {
     local cmd="$1"
     export PATH="$HOME/miniconda3/bin:$PATH"
     
-    # Detect CUDA installation
+    # Detect CUDA installation (prefer CUDA 11.8 for official TRELLIS compatibility)
     local cuda_vars=""
-    if [ -d "/usr/local/cuda-12.4/bin" ]; then
-        cuda_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
-    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+    if [ -d "/usr/local/cuda-11.8/bin" ]; then
         cuda_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
         cuda_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda/bin" ]; then
         cuda_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
     fi
@@ -517,6 +534,7 @@ run_in_trellis_env() {
         $cuda_vars
         export PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH'
         export SPCONV_ALGO='native'
+        export ATTN_BACKEND='flash-attn'
         export CUDA_LAUNCH_BLOCKING=1
         export PATH='$HOME/miniconda3/envs/trellis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH'
         export LD_LIBRARY_PATH='/usr/lib/x86_64-linux-gnu:/usr/lib64:\$LD_LIBRARY_PATH'
@@ -540,9 +558,9 @@ verify_trellis_env() {
     PYTHON_VERSION=$(conda run -n trellis python --version 2>/dev/null || echo "unknown")
     PYTHON_PATH=$(conda run -n trellis which python 2>/dev/null || echo "unknown")
     
-    if [[ ! "$PYTHON_VERSION" == *"3.10"* ]]; then
+    if [[ ! "$PYTHON_VERSION" == *"3."* ]]; then
         error "Trellis environment has wrong Python version!"
-        error "Expected: Python 3.10.x"
+        error "Expected: Python 3.8+"
         error "Got: $PYTHON_VERSION"
         error "Python path: $PYTHON_PATH"
         exit 1
@@ -630,9 +648,9 @@ verify_cuda_installation() {
     log "CUDA verification completed"
 }
 
-# Install PyTorch with CUDA support
+# Install PyTorch with CUDA support (following official TRELLIS requirements)
 install_pytorch_cuda() {
-    log "Installing PyTorch with CUDA support..."
+    log "Installing PyTorch with CUDA support (following official TRELLIS requirements)..."
     
     # Verify environment exists and has correct Python version
     verify_trellis_env
@@ -665,15 +683,29 @@ install_pytorch_cuda() {
     log "Checking if PyTorch is already installed..."
     if run_in_trellis_env "python -c 'import torch; print(f\"PyTorch {torch.__version__} already installed\")'" 2>/dev/null; then
         info "PyTorch is already installed"
-    else
-        # Install compatible PyTorch version (2.5.1 instead of 2.6.0 for better compatibility)
-        log "Installing PyTorch 2.5.1 with CUDA 12.4 support for better package compatibility..."
-        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+        # Check if it's the correct version
+        PYTORCH_VERSION=$(run_in_trellis_env "python -c 'import torch; print(torch.__version__)'" 2>/dev/null || echo "unknown")
+        if [[ "$PYTORCH_VERSION" == *"2.4"* ]]; then
+            log "PyTorch 2.4.x is already installed (matches official TRELLIS requirement)"
+            return 0
+        else
+            warn "PyTorch version $PYTORCH_VERSION doesn't match official requirement (2.4.0)"
+            warn "Installing official TRELLIS PyTorch version..."
+        fi
+    fi
+    
+    # Install PyTorch 2.4.0 with CUDA 11.8 (official TRELLIS requirement)
+    log "Installing PyTorch 2.4.0 with CUDA 11.8 support (official TRELLIS requirement)..."
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 --index-url https://download.pytorch.org/whl/cu118"
+    
+    # Verify PyTorch installation
+    if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
+        warn "PyTorch 2.4.0 installation failed, trying alternative method..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118"
         
-        # Verify PyTorch installation
         if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
-            warn "PyTorch installation failed, trying alternative method..."
-            run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124"
+            warn "CUDA 11.8 PyTorch failed, trying CUDA 12.1..."
+            run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121"
         fi
     fi
     
@@ -692,23 +724,23 @@ install_pytorch_cuda() {
 setup_cuda_env_vars() {
     log "Setting up CUDA environment variables in conda environment..."
     
-    # Determine CUDA path
+    # Determine CUDA path (prefer CUDA 11.8 for official TRELLIS compatibility)
     local cuda_path=""
-    if [ -d "/usr/local/cuda-12.4/bin" ]; then
-        cuda_path="/usr/local/cuda-12.4"
-        info "Using CUDA 12.4"
-    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+    if [ -d "/usr/local/cuda-11.8/bin" ]; then
         cuda_path="/usr/local/cuda-11.8"
-        info "Using CUDA 11.8"
+        info "Using CUDA 11.8 (official TRELLIS requirement)"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
         cuda_path="/usr/local/cuda-12.2"
         info "Using CUDA 12.2"
+    elif [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_path="/usr/local/cuda-12.4"
+        info "Using CUDA 12.4"
     elif [ -d "/usr/local/cuda/bin" ]; then
         cuda_path="/usr/local/cuda"
         info "Using default CUDA installation"
     else
         error "No CUDA installation found!"
-        error "Please install CUDA toolkit first: sudo apt install cuda-toolkit-12-4"
+        error "Please install CUDA toolkit first: sudo apt install cuda-toolkit-11-8"
         exit 1
     fi
     
@@ -719,15 +751,17 @@ setup_cuda_env_vars() {
     # Create activation directory if it doesn't exist
     mkdir -p "$env_vars_dir"
     
-    # Create script to set CUDA environment variables
+    # Create script to set CUDA environment variables (following official TRELLIS requirements)
     cat > "$env_vars_script" << EOF
 #!/bin/bash
-# CUDA environment variables for TRELLIS
+# CUDA environment variables for TRELLIS (following official requirements)
 export CUDA_HOME="$cuda_path"
 export PATH="$cuda_path/bin:\$PATH"
 export LD_LIBRARY_PATH="$cuda_path/lib64:\$LD_LIBRARY_PATH"
 export CUDA_LAUNCH_BLOCKING=1
 export SPCONV_ALGO='native'
+# Set attention backend (flash-attn is default, can be changed to xformers for older GPUs)
+export ATTN_BACKEND='flash-attn'
 EOF
     
     chmod +x "$env_vars_script"
@@ -742,6 +776,7 @@ EOF
 #!/bin/bash
 # Remove CUDA environment variables when deactivating TRELLIS environment
 unset CUDA_HOME
+unset ATTN_BACKEND
 # Note: We don't unset PATH and LD_LIBRARY_PATH as they might be used by other applications
 EOF
     
@@ -751,11 +786,12 @@ EOF
     info "CUDA_HOME: $cuda_path"
     info "PATH: $cuda_path/bin (added)"
     info "LD_LIBRARY_PATH: $cuda_path/lib64 (added)"
+    info "ATTN_BACKEND: flash-attn (can be changed to xformers for older GPUs)"
 }
 
-# Install TRELLIS dependencies
+# Install TRELLIS dependencies (following official setup.sh)
 install_trellis_deps() {
-    log "Installing TRELLIS dependencies..."
+    log "Installing TRELLIS dependencies using official setup.sh..."
     
     # Verify environment exists and has correct Python version
     verify_trellis_env
@@ -763,18 +799,18 @@ install_trellis_deps() {
     # Set up CUDA environment variables permanently
     setup_cuda_env_vars
     
-    # Define CUDA environment variables for this session
+    # Define CUDA environment variables for this session (prefer CUDA 11.8)
     local cuda_path=""
     local cuda_env_vars=""
-    if [ -d "/usr/local/cuda-12.4/bin" ]; then
-        cuda_path="/usr/local/cuda-12.4"
-        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
-    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+    if [ -d "/usr/local/cuda-11.8/bin" ]; then
         cuda_path="/usr/local/cuda-11.8"
         cuda_env_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
         cuda_path="/usr/local/cuda-12.2"
         cuda_env_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_path="/usr/local/cuda-12.4"
+        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda/bin" ]; then
         cuda_path="/usr/local/cuda"
         cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
@@ -824,39 +860,42 @@ install_trellis_deps() {
     local conda_env_path="$HOME/miniconda3/envs/trellis/bin"
     local full_path_setup="export PATH='$conda_env_path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH';"
     
-    # Install dependencies using the setup script step by step (in conda environment)
-    info "Installing basic dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --basic"
+    # Use official TRELLIS setup.sh with proper sourcing (following official documentation)
+    info "Installing dependencies using official TRELLIS setup.sh..."
     
-    info "Installing xformers (compatible version for PyTorch 2.5.1)..."
-    # Install specific xformers version compatible with PyTorch 2.5.1
-    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install xformers==0.0.28.post3 --no-deps"
-    # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
-    
-    info "Installing flash-attn..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --flash-attn" || warn "Flash-attn installation failed, continuing with other dependencies"
-    
-    info "Installing diffoctreerast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --diffoctreerast" || warn "Diffoctreerast installation failed, continuing with other dependencies"
-    
-    info "Installing spconv..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --spconv" || warn "Spconv installation failed, continuing with other dependencies"
-    
-    info "Installing mip-splatting..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --mipgaussian" || warn "Mip-splatting installation failed, continuing with other dependencies"
-    
-    info "Installing kaolin (compatible version for PyTorch 2.5.1)..."
-    # Install kaolin using pip with compatible PyTorch version
-    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html" || warn "Kaolin installation failed, trying alternative method"
-    # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
-    
-    info "Installing nvdiffrast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --nvdiffrast" || warn "Nvdiffrast installation failed, continuing with other dependencies"
-    
-    info "Installing demo dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --demo" || warn "Demo dependencies installation failed, continuing with other dependencies"
+    # First, activate the environment and run the full setup as recommended
+    log "Running official TRELLIS setup with all recommended flags..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --basic --xformers --flash-attn --diffoctreerast --spconv --mipgaussian --kaolin --nvdiffrast --demo" || {
+        warn "Full setup failed, trying step by step installation..."
+        
+        # If full setup fails, try step by step as fallback
+        info "Installing basic dependencies..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --basic" || warn "Basic dependencies installation failed"
+        
+        info "Installing xformers..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --xformers" || warn "Xformers installation failed"
+        
+        info "Installing flash-attn..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --flash-attn" || warn "Flash-attn installation failed"
+        
+        info "Installing diffoctreerast..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --diffoctreerast" || warn "Diffoctreerast installation failed"
+        
+        info "Installing spconv..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --spconv" || warn "Spconv installation failed"
+        
+        info "Installing mip-splatting..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --mipgaussian" || warn "Mip-splatting installation failed"
+        
+        info "Installing kaolin..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --kaolin" || warn "Kaolin installation failed"
+        
+        info "Installing nvdiffrast..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --nvdiffrast" || warn "Nvdiffrast installation failed"
+        
+        info "Installing demo dependencies..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source ./setup.sh --demo" || warn "Demo dependencies installation failed"
+    }
     
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
@@ -1272,13 +1311,20 @@ conda activate trellis
 # Change to TRELLIS directory
 cd "$TRELLIS_DIR"
 
-# Set environment variables
+# Set environment variables (following official TRELLIS requirements)
 export SPCONV_ALGO='native'
+export ATTN_BACKEND='flash-attn'
 export CUDA_LAUNCH_BLOCKING=1
 export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
 
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
+# Set CUDA paths if available (prefer CUDA 11.8)
+if [ -d "/usr/local/cuda-11.8/bin" ]; then
+    export PATH="/usr/local/cuda-11.8/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-11.8"
+elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+    export PATH="/usr/local/cuda-12.2/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-12.2"
+elif [ -d "/usr/local/cuda/bin" ]; then
     export PATH="/usr/local/cuda/bin:$PATH"
     export CUDA_HOME="/usr/local/cuda"
 fi
@@ -1288,6 +1334,7 @@ echo -e "${GREEN}Access TRELLIS locally at: http://localhost:7860${NC}"
 echo -e "${GREEN}Access TRELLIS from network at: http://$(hostname -I | awk '{print $1}'):7860${NC}"
 echo -e "${GREEN}Press Ctrl+C to stop TRELLIS${NC}"
 echo -e "${BLUE}Note: First launch may take longer due to model downloads${NC}"
+echo -e "${BLUE}Environment: SPCONV_ALGO=$SPCONV_ALGO, ATTN_BACKEND=$ATTN_BACKEND${NC}"
 echo
 
 # Launch TRELLIS web demo with network access
@@ -1322,19 +1369,27 @@ source "$CONDA_DIR/etc/profile.d/conda.sh"
 conda activate trellis
 cd "$TRELLIS_DIR"
 
-# Set environment variables
+# Set environment variables (following official TRELLIS requirements)
 export SPCONV_ALGO='native'
+export ATTN_BACKEND='flash-attn'
 export CUDA_LAUNCH_BLOCKING=1
 export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
 
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
+# Set CUDA paths if available (prefer CUDA 11.8)
+if [ -d "/usr/local/cuda-11.8/bin" ]; then
+    export PATH="/usr/local/cuda-11.8/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-11.8"
+elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+    export PATH="/usr/local/cuda-12.2/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-12.2"
+elif [ -d "/usr/local/cuda/bin" ]; then
     export PATH="/usr/local/cuda/bin:$PATH"
     export CUDA_HOME="/usr/local/cuda"
 fi
 
 echo -e "${GREEN}Starting TRELLIS Text-to-3D Web Demo...${NC}"
 echo -e "${GREEN}Access at: http://localhost:7860${NC}"
+echo -e "${BLUE}Environment: SPCONV_ALGO=$SPCONV_ALGO, ATTN_BACKEND=$ATTN_BACKEND${NC}"
 echo
 
 # Launch text-to-3D demo
@@ -1369,18 +1424,26 @@ source "$CONDA_DIR/etc/profile.d/conda.sh"
 conda activate trellis
 cd "$TRELLIS_DIR"
 
-# Set environment variables
+# Set environment variables (following official TRELLIS requirements)
 export SPCONV_ALGO='native'
+export ATTN_BACKEND='flash-attn'
 export CUDA_LAUNCH_BLOCKING=1
 export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
 
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
+# Set CUDA paths if available (prefer CUDA 11.8)
+if [ -d "/usr/local/cuda-11.8/bin" ]; then
+    export PATH="/usr/local/cuda-11.8/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-11.8"
+elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+    export PATH="/usr/local/cuda-12.2/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda-12.2"
+elif [ -d "/usr/local/cuda/bin" ]; then
     export PATH="/usr/local/cuda/bin:$PATH"
     export CUDA_HOME="/usr/local/cuda"
 fi
 
 echo -e "${GREEN}Running TRELLIS example...${NC}"
+echo -e "${BLUE}Environment: SPCONV_ALGO=$SPCONV_ALGO, ATTN_BACKEND=$ATTN_BACKEND${NC}"
 echo
 
 # Run example
@@ -1626,7 +1689,8 @@ print_instructions() {
     echo "  cd $HOME/TRELLIS"
     echo "  export PYTHONPATH=\"$HOME/TRELLIS:\$PYTHONPATH\""
     echo "  export SPCONV_ALGO='native'"
-    echo "  python app.py"
+    echo "  export ATTN_BACKEND='flash-attn'"
+    echo "  python app.py --server_name 0.0.0.0 --server_port 7860"
     echo
     info "Available models (will download automatically on first use):"
     echo "  - TRELLIS-image-large (1.2B params) - Best for image-to-3D"
@@ -1634,9 +1698,9 @@ print_instructions() {
     echo "  - TRELLIS-text-large (1.1B params) - Text-to-3D"
     echo "  - TRELLIS-text-xlarge (2.0B params) - Text-to-3D"
     echo
-    info "Environment variables:"
-    echo "  SPCONV_ALGO='native' - Faster for single runs"
-    echo "  ATTN_BACKEND='flash-attn' - Default attention backend"
+    info "Environment variables (following official TRELLIS requirements):"
+    echo "  SPCONV_ALGO='native' - Faster for single runs (official default)"
+    echo "  ATTN_BACKEND='flash-attn' - Default attention backend (can be 'xformers' for older GPUs)"
     echo "  CUDA_LAUNCH_BLOCKING=1 - Better error reporting"
     echo "  PYTHONPATH='$HOME/TRELLIS' - Required for imports"
     echo
@@ -1737,9 +1801,11 @@ main() {
     echo "  - GLB/PLY/MP4 export capabilities"
     echo "  - Web-based user interface"
     echo
-    warn "System requirements:"
-    echo "  - Debian 12 Linux system"
-    echo "  - NVIDIA GPU with 16GB+ VRAM (recommended)"
+    warn "System requirements (following official TRELLIS documentation):"
+    echo "  - Linux system (tested on Debian 12)"
+    echo "  - NVIDIA GPU with 16GB+ VRAM (tested on A100, A6000)"
+    echo "  - Python 3.8+ (will install Python 3.8-3.11)"
+    echo "  - CUDA Toolkit 11.8 or 12.2 (will install CUDA 11.8 preferred)"
     echo "  - 50GB+ free disk space"
     echo "  - Internet connection for downloads"
     echo
