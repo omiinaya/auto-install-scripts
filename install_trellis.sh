@@ -820,39 +820,43 @@ install_trellis_deps() {
     log "Verifying getopt availability in conda environment..."
     run_in_trellis_env "which getopt && getopt --version" || warn "getopt not found in conda environment, this may cause setup script issues"
     
+    # Add conda environment bin to PATH to ensure getopt is available for setup script
+    local conda_env_path="$HOME/miniconda3/envs/trellis/bin"
+    local full_path_setup="export PATH='$conda_env_path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH';"
+    
     # Install dependencies using the setup script step by step (in conda environment)
     info "Installing basic dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --basic"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --basic"
     
     info "Installing xformers (compatible version for PyTorch 2.5.1)..."
     # Install specific xformers version compatible with PyTorch 2.5.1
     run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install xformers==0.0.28.post3 --no-deps"
     # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
     
     info "Installing flash-attn..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --flash-attn" || warn "Flash-attn installation failed, continuing with other dependencies"
     
     info "Installing diffoctreerast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --diffoctreerast" || warn "Diffoctreerast installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --diffoctreerast" || warn "Diffoctreerast installation failed, continuing with other dependencies"
     
     info "Installing spconv..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --spconv" || warn "Spconv installation failed, continuing with other dependencies"
     
     info "Installing mip-splatting..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --mipgaussian" || warn "Mip-splatting installation failed, continuing with other dependencies"
     
     info "Installing kaolin (compatible version for PyTorch 2.5.1)..."
     # Install kaolin using pip with compatible PyTorch version
     run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html" || warn "Kaolin installation failed, trying alternative method"
     # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
     
     info "Installing nvdiffrast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --nvdiffrast" || warn "Nvdiffrast installation failed, continuing with other dependencies"
     
     info "Installing demo dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --demo" || warn "Demo dependencies installation failed, continuing with other dependencies"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --demo" || warn "Demo dependencies installation failed, continuing with other dependencies"
     
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
@@ -1199,21 +1203,25 @@ retry_cuda_dependent_installations() {
         cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
     fi
     
+    # Add conda environment bin to PATH to ensure getopt is available
+    local conda_env_path="$HOME/miniconda3/envs/trellis/bin"
+    local full_path_setup="export PATH='$conda_env_path:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH';"
+    
     # Retry flash-attn installation
     info "Retrying flash-attn installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation still failed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --flash-attn" || warn "Flash-attn installation still failed"
     
     # Retry spconv installation
     info "Retrying spconv installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation still failed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --spconv" || warn "Spconv installation still failed"
     
     # Retry mip-splatting installation
     info "Retrying mip-splatting installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation still failed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --mipgaussian" || warn "Mip-splatting installation still failed"
     
     # Retry nvdiffrast installation
     info "Retrying nvdiffrast installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation still failed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars $full_path_setup source setup.sh --nvdiffrast" || warn "Nvdiffrast installation still failed"
     
     log "CUDA-dependent package retry completed"
 }
@@ -1515,6 +1523,76 @@ install_missing_deps() {
         "setuptools"
         "wheel"
         "pip"
+        "rembg"
+        "mediapipe"
+        "face-detection"
+        "insightface"
+        "onnxruntime"
+        "onnx"
+        "protobuf"
+        "timm"
+        "einops"
+        "transformers"
+        "diffusers"
+        "accelerate"
+        "safetensors"
+        "huggingface-hub"
+        "trimesh"
+        "pyopengl"
+        "moderngl"
+        "imageio-ffmpeg"
+        "av"
+        "decord"
+        "moviepy"
+        "imageio"
+        "opencv-contrib-python"
+        "scikit-learn"
+        "networkx"
+        "sympy"
+        "numba"
+        "llvmlite"
+        "joblib"
+        "cachetools"
+        "filelock"
+        "fsspec"
+        "pyparsing"
+        "cycler"
+        "kiwisolver"
+        "python-dateutil"
+        "pytz"
+        "certifi"
+        "charset-normalizer"
+        "idna"
+        "urllib3"
+        "requests"
+        "markupsafe"
+        "jinja2"
+        "werkzeug"
+        "itsdangerous"
+        "blinker"
+        "gradio"
+        "fastapi"
+        "uvicorn"
+        "python-multipart"
+        "aiofiles"
+        "websockets"
+        "httpx"
+        "anyio"
+        "sniffio"
+        "h11"
+        "httpcore"
+        "rfc3986"
+        "typing-extensions"
+        "pydantic"
+        "starlette"
+        "orjson"
+        "python-dotenv"
+        "pyyaml-include"
+        "optuna"
+        "sqlalchemy"
+        "alembic"
+        "mako"
+        "greenlet"
     )
     
     for dep in "${missing_deps[@]}"; do
