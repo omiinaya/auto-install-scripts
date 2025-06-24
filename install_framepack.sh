@@ -183,31 +183,161 @@ create_venv() {
     log "Virtual environment created at $VENV_DIR"
 }
 
+# Install nvcc compiler specifically
+install_nvcc() {
+    log "Ensuring nvcc compiler is installed..."
+    
+    # Check if nvcc is already available
+    if command -v nvcc >/dev/null 2>&1; then
+        info "nvcc already available at: $(which nvcc)"
+        nvcc --version | head -1
+        return 0
+    fi
+    
+    info "nvcc not found, installing CUDA development tools..."
+    
+    # Install comprehensive CUDA development packages
+    sudo apt update
+    
+    # First try the standard CUDA packages that should be available
+    info "Attempting to install CUDA toolkit packages..."
+    sudo apt install -y \
+        cuda-toolkit-12-6 \
+        cuda-compiler-12-6 \
+        cuda-nvcc-12-6 \
+        cuda-toolkit-config-common \
+        cuda-runtime-12-6 \
+        cuda-drivers || warn "Some primary CUDA packages could not be installed"
+    
+    # If that fails, try installing the full CUDA toolkit
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Primary packages failed, trying full CUDA installation..."
+        sudo apt install -y cuda || warn "Full CUDA installation failed"
+    fi
+    
+    # If still no nvcc, try alternative approaches
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Trying alternative CUDA package names..."
+        sudo apt install -y \
+            cuda-toolkit \
+            cuda-nvcc \
+            cuda-compiler \
+            libcuda1 \
+            libcudart12 || warn "Alternative CUDA packages failed"
+    fi
+    
+    # Last resort: try to install from nvidia-cuda-toolkit if available
+    if ! command -v nvcc >/dev/null 2>&1; then
+        info "Trying nvidia-cuda-toolkit as last resort..."
+        sudo apt install -y nvidia-cuda-toolkit || warn "nvidia-cuda-toolkit not available"
+    fi
+    
+    # Refresh PATH to pick up newly installed binaries
+    export PATH="/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/local/cuda-12/bin:/usr/local/cuda-12.6/bin:/usr/local/cuda-12.9/bin:$PATH"
+    hash -r
+    
+    # Verify nvcc installation and make it globally available
+    if command -v nvcc >/dev/null 2>&1; then
+        log "nvcc successfully installed at: $(which nvcc)"
+        nvcc --version | head -1
+    else
+        warn "nvcc still not found after installation attempts"
+        info "Searching for nvcc in the system..."
+        find /usr -name nvcc -type f 2>/dev/null | head -5 || warn "No nvcc found in /usr"
+        
+        # Find nvcc and make it globally available
+        NVCC_LOCATION=$(find /usr -name nvcc -type f 2>/dev/null | head -1)
+        if [ -n "$NVCC_LOCATION" ]; then
+            info "Found nvcc at: $NVCC_LOCATION"
+            
+            # Create symlink in /usr/local/bin (which is in everyone's PATH)
+            sudo ln -sf "$NVCC_LOCATION" /usr/local/bin/nvcc
+            info "Created global symlink: /usr/local/bin/nvcc -> $NVCC_LOCATION"
+            
+            # Also create symlinks for other CUDA tools if they exist
+            NVCC_DIR=$(dirname "$NVCC_LOCATION")
+            for tool in nvprof nsight-compute nsight-systems; do
+                if [ -f "$NVCC_DIR/$tool" ]; then
+                    sudo ln -sf "$NVCC_DIR/$tool" "/usr/local/bin/$tool"
+                    info "Created symlink: /usr/local/bin/$tool"
+                fi
+            done
+            
+            # Add the CUDA bin directory to system PATH permanently
+            if [ ! -f "/etc/profile.d/cuda.sh" ]; then
+                sudo tee /etc/profile.d/cuda.sh > /dev/null << EOF
+# CUDA tools PATH (added by FramePack installer)
+export PATH="$NVCC_DIR:\$PATH"
+export CUDA_HOME="$(dirname "$NVCC_DIR")"
+export LD_LIBRARY_PATH="$(dirname "$NVCC_DIR")/lib64:\$LD_LIBRARY_PATH"
+EOF
+                info "Created system-wide CUDA environment: /etc/profile.d/cuda.sh"
+            fi
+            
+            # Source the new profile script
+            source /etc/profile.d/cuda.sh 2>/dev/null || true
+            
+        else
+            warn "nvcc not found anywhere in the system after installation."
+            info "Checking what CUDA packages are available..."
+            apt list --installed | grep -i cuda | head -10 || true
+            info "Available CUDA packages in repository:"
+            apt search cuda-toolkit 2>/dev/null | head -10 || true
+            warn "CUDA development tools may not be properly installed. Flash-attention will be skipped."
+        fi
+    fi
+    
+    # Final verification
+    if command -v nvcc >/dev/null 2>&1; then
+        log "nvcc is now globally available at: $(which nvcc)"
+        nvcc --version | head -1
+    else
+        warn "nvcc still not accessible. Flash-attention and other CUDA tools may fail."
+    fi
+}
+
 # Setup CUDA environment variables
 setup_cuda_environment() {
     log "Setting up CUDA environment variables..."
     
+    # First ensure nvcc is installed
+    install_nvcc
+    
     # Find CUDA installation path
     CUDA_PATH=""
-    for path in /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda /opt/cuda; do
-        if [ -d "$path" ]; then
+    
+    # First check for any CUDA version directories
+    for path in /usr/local/cuda-* /usr/local/cuda /usr/lib/cuda /opt/cuda; do
+        if [ -d "$path" ] && [ -f "$path/bin/nvcc" ]; then
             CUDA_PATH="$path"
+            info "Found CUDA installation with nvcc at: $path"
             break
         fi
     done
     
+    # If no versioned directory found, check standard locations
     if [ -z "$CUDA_PATH" ]; then
-        warn "CUDA installation not found in standard locations"
-        info "Installing CUDA toolkit..."
-        sudo apt install -y nvidia-cuda-toolkit cuda-toolkit-12-6 || warn "Could not install CUDA toolkit"
-        
-        # Try to find CUDA again
-        for path in /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda /opt/cuda; do
+        for path in /usr/local/cuda-12.9 /usr/local/cuda-12.6 /usr/local/cuda-12 /usr/local/cuda /usr/lib/cuda /opt/cuda; do
             if [ -d "$path" ]; then
                 CUDA_PATH="$path"
                 break
             fi
         done
+    fi
+    
+    # If no standard CUDA path found, derive from nvcc location
+    if [ -z "$CUDA_PATH" ]; then
+        NVCC_LOCATION=$(which nvcc 2>/dev/null || find /usr -name nvcc -type f 2>/dev/null | head -1)
+        if [ -n "$NVCC_LOCATION" ]; then
+            CUDA_PATH=$(dirname $(dirname "$NVCC_LOCATION"))
+            info "Derived CUDA_PATH from nvcc location: $CUDA_PATH"
+            
+            # Create standard symlink if it doesn't exist
+            if [ ! -L /usr/local/cuda ] && [ "$CUDA_PATH" != "/usr/local/cuda" ]; then
+                sudo ln -sf "$CUDA_PATH" /usr/local/cuda
+                info "Created symlink: /usr/local/cuda -> $CUDA_PATH"
+            fi
+        fi
     fi
     
     if [ -n "$CUDA_PATH" ]; then
@@ -233,8 +363,28 @@ EOF
         fi
         
         log "CUDA environment variables configured"
+        
+        # Verify CUDA setup
+        info "Verifying CUDA installation..."
+        if command -v nvcc >/dev/null 2>&1; then
+            nvcc --version | head -1 || true
+        else
+            warn "nvcc command not found in PATH"
+        fi
+        
+        if [ -f "$CUDA_PATH/bin/nvcc" ]; then
+            info "nvcc found at: $CUDA_PATH/bin/nvcc"
+        else
+            warn "nvcc not found at expected location: $CUDA_PATH/bin/nvcc"
+        fi
     else
         warn "Could not locate CUDA installation. Some features may not work."
+        
+        # Debug information
+        info "Debugging CUDA installation..."
+        info "Searching for nvcc in system..."
+        find /usr -name nvcc -type f 2>/dev/null | head -5 || true
+        which nvcc 2>/dev/null || warn "nvcc not found in PATH"
     fi
 }
 
@@ -251,9 +401,12 @@ install_pytorch_cuda() {
         pip install --upgrade pip
     fi
     
+    # Uninstall any existing PyTorch installations to avoid conflicts
+    pip uninstall -y torch torchvision torchaudio triton xformers 2>/dev/null || true
+    
     # Install PyTorch with CUDA 12.6 support (as specified in FramePack docs)
-    # Install all three together to avoid version conflicts
-    pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
+    # Use specific versions to ensure compatibility
+    pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu126
     
     log "PyTorch with CUDA 12.6 support installed"
 }
@@ -297,6 +450,38 @@ install_attention_kernels() {
     # Ensure we're in the virtual environment
     source "$HOME/framepack-env/bin/activate"
     
+    # Ensure CUDA environment is properly loaded
+    if [ -f "/etc/profile.d/cuda.sh" ]; then
+        source /etc/profile.d/cuda.sh 2>/dev/null || true
+    fi
+    
+    if [ -f "$HOME/.bashrc" ]; then
+        source "$HOME/.bashrc" 2>/dev/null || true
+    fi
+    
+    # Re-export CUDA environment variables if they exist
+    # Check for any CUDA installation
+    CUDA_ENV_PATH=""
+    for cuda_path in /usr/local/cuda-* /usr/local/cuda; do
+        if [ -d "$cuda_path" ] && [ -f "$cuda_path/bin/nvcc" ]; then
+            CUDA_ENV_PATH="$cuda_path"
+            break
+        fi
+    done
+    
+    if [ -n "$CUDA_ENV_PATH" ]; then
+        export CUDA_HOME="$CUDA_ENV_PATH"
+        export CUDA_ROOT="$CUDA_ENV_PATH" 
+        export PATH="$CUDA_ENV_PATH/bin:$PATH"
+        export LD_LIBRARY_PATH="$CUDA_ENV_PATH/lib64:$LD_LIBRARY_PATH"
+        info "Set CUDA environment to: $CUDA_ENV_PATH"
+    elif [ -d "/usr/local/cuda" ]; then
+        export CUDA_HOME="/usr/local/cuda"
+        export CUDA_ROOT="/usr/local/cuda" 
+        export PATH="/usr/local/cuda/bin:$PATH"
+        export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+    fi
+    
     if ask_yes_no "Do you want to install sage-attention for better performance? (may affect results slightly)" "y"; then
         info "Installing sage-attention..."
         pip install sageattention==1.0.6 || warn "Failed to install sage-attention, continuing without it"
@@ -304,22 +489,72 @@ install_attention_kernels() {
     
     if ask_yes_no "Do you want to install xformers for memory efficiency?" "y"; then
         info "Installing xformers..."
-        pip install xformers || warn "Failed to install xformers, continuing without it"
+        # Install xformers after PyTorch to ensure compatibility
+        pip install xformers==0.0.30 || warn "Failed to install xformers, continuing without it"
     fi
     
     if ask_yes_no "Do you want to install flash-attention?" "n"; then
         info "Installing flash-attention..."
+        
+        # Debug: Show current CUDA environment
+        info "Current CUDA environment:"
+        info "  CUDA_HOME: ${CUDA_HOME:-not set}"
+        info "  PATH contains cuda: $(echo $PATH | grep -o cuda || echo 'no')"
+        info "  nvcc available: $(which nvcc 2>/dev/null || echo 'not found')"
         
         # Check if CUDA environment is properly set
         if [ -z "$CUDA_HOME" ]; then
             warn "CUDA_HOME not set. Setting up CUDA environment first..."
             # Source bashrc to get CUDA variables
             source "$HOME/.bashrc" 2>/dev/null || true
+            
+            # Force set CUDA environment if not already set
+            if [ -z "$CUDA_HOME" ] && [ -d "/usr/local/cuda" ]; then
+                export CUDA_HOME="/usr/local/cuda"
+                export CUDA_ROOT="/usr/local/cuda"
+                export PATH="/usr/local/cuda/bin:$PATH"
+                export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+                info "Force-set CUDA environment variables"
+            fi
         fi
         
-        # Install with proper CUDA environment
-        CUDA_HOME="${CUDA_HOME:-/usr/local/cuda}" \
-        pip install flash-attn --no-build-isolation || warn "Failed to install flash-attention, continuing without it"
+        # Debug: Show CUDA environment after setup
+        info "CUDA environment after setup:"
+        info "  CUDA_HOME: ${CUDA_HOME:-not set}"
+        info "  nvcc available: $(which nvcc 2>/dev/null || echo 'not found')"
+        
+        # Verify nvcc is available
+        CUDA_HOME_TO_USE="${CUDA_HOME:-/usr/local/cuda}"
+        if [ ! -f "$CUDA_HOME_TO_USE/bin/nvcc" ]; then
+            warn "nvcc not found at $CUDA_HOME_TO_USE/bin/nvcc"
+            # Try alternative locations
+            for alt_path in /usr/bin/nvcc /usr/local/cuda-12.9/bin/nvcc /usr/local/cuda-12.6/bin/nvcc /usr/local/cuda-12/bin/nvcc /usr/lib/cuda/bin/nvcc; do
+                if [ -f "$alt_path" ]; then
+                    CUDA_HOME_TO_USE=$(dirname $(dirname "$alt_path"))
+                    info "Found nvcc at $alt_path, using CUDA_HOME=$CUDA_HOME_TO_USE"
+                    break
+                fi
+            done
+            
+            # If still not found, use which/find to locate nvcc
+            if [ ! -f "$CUDA_HOME_TO_USE/bin/nvcc" ]; then
+                NVCC_LOCATION=$(which nvcc 2>/dev/null || find /usr -name nvcc -type f 2>/dev/null | head -1)
+                if [ -n "$NVCC_LOCATION" ]; then
+                    CUDA_HOME_TO_USE=$(dirname $(dirname "$NVCC_LOCATION"))
+                    info "Located nvcc at $NVCC_LOCATION, using CUDA_HOME=$CUDA_HOME_TO_USE"
+                fi
+            fi
+        fi
+        
+        if [ -f "$CUDA_HOME_TO_USE/bin/nvcc" ]; then
+            info "Installing flash-attention with CUDA_HOME=$CUDA_HOME_TO_USE"
+            # Install with proper CUDA environment
+            CUDA_HOME="$CUDA_HOME_TO_USE" \
+            pip install flash-attn --no-build-isolation || warn "Failed to install flash-attention, continuing without it"
+        else
+            warn "nvcc compiler not found. Skipping flash-attention installation."
+            warn "You can install it manually later if needed."
+        fi
     fi
 }
 
