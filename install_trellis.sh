@@ -519,6 +519,7 @@ run_in_trellis_env() {
         export SPCONV_ALGO='native'
         export CUDA_LAUNCH_BLOCKING=1
         export PATH='$HOME/miniconda3/envs/trellis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH'
+        export LD_LIBRARY_PATH='/usr/lib/x86_64-linux-gnu:/usr/lib64:\$LD_LIBRARY_PATH'
         $cmd
     "
 }
@@ -798,6 +799,10 @@ install_trellis_deps() {
     
     # Make setup script executable
     run_in_trellis_env "cd '$HOME/TRELLIS' && chmod +x setup.sh"
+    
+    # Verify getopt is available in the conda environment
+    log "Verifying getopt availability in conda environment..."
+    run_in_trellis_env "which getopt && getopt --version" || warn "getopt not found in conda environment, this may cause setup script issues"
     
     # Install dependencies using the setup script step by step (in conda environment)
     info "Installing basic dependencies..."
@@ -1104,27 +1109,17 @@ EOF
 test_installation() {
     log "Testing installation..."
     
-    # Ensure conda is in PATH and activate environment
-    export PATH="$HOME/miniconda3/bin:$PATH"
-    source "$HOME/miniconda3/etc/profile.d/conda.sh"
-    conda activate trellis
-    
-    # Change to TRELLIS directory
-    cd "$HOME/TRELLIS"
-    
-    # Set environment variables
-    export SPCONV_ALGO='native'
-    
-    # Test Python imports
-    info "Testing Python imports..."
-    python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')" || warn "PyTorch import failed"
-    python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')" || warn "CUDA test failed"
+    # Use the run_in_trellis_env function to test in the proper environment
+    info "Testing Python imports in conda environment..."
+    run_in_trellis_env "python -c \"import torch; print(f'PyTorch version: {torch.__version__}')\"" || warn "PyTorch import failed"
+    run_in_trellis_env "python -c \"import torch; print(f'CUDA available: {torch.cuda.is_available()}')\"" || warn "CUDA test failed"
     
     # Test TRELLIS imports
-    info "Testing TRELLIS imports..."
-    python3 -c "from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')" || warn "TRELLIS import failed"
+    info "Testing TRELLIS imports in conda environment..."
+    run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" || warn "TRELLIS import failed"
     
-    if python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null; then
+    # Test CUDA availability
+    if run_in_trellis_env "python -c \"import torch; exit(0 if torch.cuda.is_available() else 1)\"" 2>/dev/null; then
         log "CUDA is available and working!"
     else
         warn "CUDA is not available. GPU acceleration may not work."
