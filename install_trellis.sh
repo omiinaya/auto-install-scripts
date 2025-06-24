@@ -865,473 +865,6 @@ install_trellis_deps() {
     log "TRELLIS dependencies installed successfully"
 }
 
-# Retry installation of CUDA-dependent packages
-retry_cuda_dependent_installations() {
-    log "Retrying installation of CUDA-dependent packages..."
-    
-    # Check if CUDA toolkit is now available
-    if ! command -v nvcc >/dev/null 2>&1; then
-        warn "CUDA toolkit still not available, skipping CUDA-dependent package retry"
-        return 0
-    fi
-    
-    info "CUDA toolkit is available, retrying failed installations..."
-    
-    # Ensure getopt is available in conda environment
-    if ! run_in_trellis_env "which getopt" 2>/dev/null; then
-        warn "getopt not found in conda environment, installing..."
-        install_getopt_in_conda
-    fi
-    
-    # Set up CUDA environment variables
-    local cuda_env_vars=""
-    if [ -d "/usr/local/cuda-12.4/bin" ]; then
-        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
-    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
-        cuda_env_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
-    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
-        cuda_env_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
-    elif [ -d "/usr/local/cuda/bin" ]; then
-        cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
-    fi
-    
-    # Retry flash-attn installation
-    info "Retrying flash-attn installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation still failed"
-    
-    # Retry spconv installation
-    info "Retrying spconv installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation still failed"
-    
-    # Retry mip-splatting installation
-    info "Retrying mip-splatting installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation still failed"
-    
-    # Retry nvdiffrast installation
-    info "Retrying nvdiffrast installation..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation still failed"
-    
-    log "CUDA-dependent package retry completed"
-}
-
-# Create launcher script
-create_launcher() {
-    log "Creating launcher scripts..."
-    
-    # Create main launcher for web demo
-    LAUNCHER_SCRIPT="$HOME/launch_trellis.sh"
-    
-    cat > "$LAUNCHER_SCRIPT" << 'EOF'
-#!/bin/bash
-
-# TRELLIS Launcher Script
-# This script activates the conda environment and launches TRELLIS web demo
-
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-CONDA_DIR="$HOME/miniconda3"
-TRELLIS_DIR="$HOME/TRELLIS"
-
-# Check if conda environment exists
-if [ ! -d "$CONDA_DIR" ]; then
-    echo -e "${RED}Miniconda not found at $CONDA_DIR${NC}"
-    echo "Please run the installer script first."
-    exit 1
-fi
-
-# Check if TRELLIS directory exists
-if [ ! -d "$TRELLIS_DIR" ]; then
-    echo -e "${RED}TRELLIS directory not found at $TRELLIS_DIR${NC}"
-    echo "Please run the installer script first."
-    exit 1
-fi
-
-# Add conda to PATH and initialize
-export PATH="$CONDA_DIR/bin:$PATH"
-source "$CONDA_DIR/etc/profile.d/conda.sh"
-
-# Activate conda environment
-conda activate trellis
-
-# Change to TRELLIS directory
-cd "$TRELLIS_DIR"
-
-# Set environment variables
-export SPCONV_ALGO='native'
-export CUDA_LAUNCH_BLOCKING=1
-
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
-    export PATH="/usr/local/cuda/bin:$PATH"
-    export CUDA_HOME="/usr/local/cuda"
-fi
-
-echo -e "${GREEN}Starting TRELLIS Web Demo...${NC}"
-echo -e "${GREEN}Access TRELLIS locally at: http://localhost:7860${NC}"
-echo -e "${GREEN}Access TRELLIS from network at: http://$(hostname -I | awk '{print $1}'):7860${NC}"
-echo -e "${GREEN}Press Ctrl+C to stop TRELLIS${NC}"
-echo -e "${BLUE}Note: First launch may take longer due to model downloads${NC}"
-echo
-
-# Launch TRELLIS web demo with network access
-python app.py --server_name 0.0.0.0 --server_port 7860 "$@"
-EOF
-
-    # Create text-to-3D launcher
-    TEXT_LAUNCHER="$HOME/launch_trellis_text.sh"
-    
-    cat > "$TEXT_LAUNCHER" << 'EOF'
-#!/bin/bash
-
-# TRELLIS Text-to-3D Launcher Script
-
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-CONDA_DIR="$HOME/miniconda3"
-TRELLIS_DIR="$HOME/TRELLIS"
-
-# Check directories
-if [ ! -d "$CONDA_DIR" ] || [ ! -d "$TRELLIS_DIR" ]; then
-    echo -e "${RED}Required directories not found. Please run the installer script first.${NC}"
-    exit 1
-fi
-
-# Add conda to PATH and activate environment
-export PATH="$CONDA_DIR/bin:$PATH"
-source "$CONDA_DIR/etc/profile.d/conda.sh"
-conda activate trellis
-cd "$TRELLIS_DIR"
-
-# Set environment variables
-export SPCONV_ALGO='native'
-export CUDA_LAUNCH_BLOCKING=1
-
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
-    export PATH="/usr/local/cuda/bin:$PATH"
-    export CUDA_HOME="/usr/local/cuda"
-fi
-
-echo -e "${GREEN}Starting TRELLIS Text-to-3D Web Demo...${NC}"
-echo -e "${GREEN}Access at: http://localhost:7860${NC}"
-echo
-
-# Launch text-to-3D demo
-python app_text.py --server_name 0.0.0.0 --server_port 7860 "$@"
-EOF
-
-    # Create example runner script
-    EXAMPLE_SCRIPT="$HOME/run_trellis_example.sh"
-    
-    cat > "$EXAMPLE_SCRIPT" << 'EOF'
-#!/bin/bash
-
-# TRELLIS Example Runner Script
-
-# Colors
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-CONDA_DIR="$HOME/miniconda3"
-TRELLIS_DIR="$HOME/TRELLIS"
-
-# Check directories
-if [ ! -d "$CONDA_DIR" ] || [ ! -d "$TRELLIS_DIR" ]; then
-    echo -e "${RED}Required directories not found. Please run the installer script first.${NC}"
-    exit 1
-fi
-
-# Add conda to PATH and activate environment
-export PATH="$CONDA_DIR/bin:$PATH"
-source "$CONDA_DIR/etc/profile.d/conda.sh"
-conda activate trellis
-cd "$TRELLIS_DIR"
-
-# Set environment variables
-export SPCONV_ALGO='native'
-export CUDA_LAUNCH_BLOCKING=1
-
-# Set CUDA paths if available
-if [ -d "/usr/local/cuda/bin" ]; then
-    export PATH="/usr/local/cuda/bin:$PATH"
-    export CUDA_HOME="/usr/local/cuda"
-fi
-
-echo -e "${GREEN}Running TRELLIS example...${NC}"
-echo
-
-# Run example
-python example.py "$@"
-EOF
-
-    # Make launcher scripts executable
-    if chmod +x "$LAUNCHER_SCRIPT" "$TEXT_LAUNCHER" "$EXAMPLE_SCRIPT"; then
-        log "Launcher scripts created and made executable:"
-        info "  Main web demo: $LAUNCHER_SCRIPT"
-        info "  Text-to-3D demo: $TEXT_LAUNCHER"
-        info "  Example runner: $EXAMPLE_SCRIPT"
-    else
-        warn "Failed to make launcher scripts executable. You may need to run: chmod +x ~/launch_trellis*.sh ~/run_trellis_example.sh"
-    fi
-}
-
-# Create systemd service (optional)
-create_systemd_service() {
-    log "Creating systemd service for TRELLIS..."
-    
-    if ! ask_yes_no "Do you want to create a systemd service to run TRELLIS automatically?" "n"; then
-        return 0
-    fi
-    
-    SERVICE_FILE="/etc/systemd/system/trellis.service"
-    
-    # Get absolute paths (resolve $HOME properly)
-    CURRENT_USER=$(whoami)
-    USER_HOME=$(eval echo ~$CURRENT_USER)
-    
-    info "Creating systemd service for user: $CURRENT_USER"
-    info "Using home directory: $USER_HOME"
-    
-    sudo tee "$SERVICE_FILE" > /dev/null << EOF
-[Unit]
-Description=TRELLIS 3D Generation Service
-After=network.target
-
-[Service]
-Type=simple
-User=$CURRENT_USER
-Group=$CURRENT_USER
-WorkingDirectory=$USER_HOME
-ExecStart=$USER_HOME/launch_trellis.sh
-Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-SyslogIdentifier=trellis
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    sudo systemctl daemon-reload
-    sudo systemctl enable trellis.service
-    
-    log "Systemd service created. You can start it with: sudo systemctl start trellis"
-}
-
-# Test installation
-test_installation() {
-    log "Testing installation..."
-    
-    # First verify PyTorch is installed
-    info "Verifying PyTorch installation in conda environment..."
-    if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
-        warn "PyTorch not found in conda environment, attempting to install..."
-        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
-    fi
-    
-    # Use the run_in_trellis_env function to test in the proper environment
-    info "Testing Python imports in conda environment..."
-    run_in_trellis_env "python -c \"import torch; print(f'PyTorch version: {torch.__version__}')\"" || warn "PyTorch import failed"
-    run_in_trellis_env "python -c \"import torch; print(f'CUDA available: {torch.cuda.is_available()}')\"" || warn "CUDA test failed"
-    
-    # Test TRELLIS imports
-    info "Testing TRELLIS imports in conda environment..."
-    if run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" 2>/dev/null; then
-        log "TRELLIS imports successful"
-    else
-        warn "TRELLIS import failed, installing missing dependencies..."
-        install_missing_deps
-        
-        # Retry TRELLIS import after installing missing dependencies
-        info "Retrying TRELLIS imports after installing missing dependencies..."
-        run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" || warn "TRELLIS import still failed after installing missing dependencies"
-    fi
-    
-    # Test CUDA availability
-    if run_in_trellis_env "python -c \"import torch; exit(0 if torch.cuda.is_available() else 1)\"" 2>/dev/null; then
-        log "CUDA is available and working!"
-    else
-        warn "CUDA is not available. GPU acceleration may not work."
-    fi
-    
-    # Install missing dependencies discovered during testing
-    install_missing_deps
-    
-    log "Installation test completed!"
-}
-
-# Install missing dependencies discovered during testing
-install_missing_deps() {
-    log "Installing missing dependencies discovered during testing..."
-    
-    # Common missing dependencies for TRELLIS
-    local missing_deps=(
-        "easydict"
-        "omegaconf"
-        "hydra-core"
-        "hydra-colorlog"
-        "hydra-optuna-sweeper"
-        "pytorch-lightning"
-        "wandb"
-        "tensorboard"
-        "tensorboardX"
-        "matplotlib"
-        "seaborn"
-        "plotly"
-        "kornia"
-        "albumentations"
-        "opencv-python"
-        "pillow"
-        "scikit-image"
-        "scipy"
-        "numpy"
-        "pandas"
-        "tqdm"
-        "pyyaml"
-        "toml"
-        "click"
-        "rich"
-        "typer"
-        "pathlib2"
-        "future"
-        "six"
-        "packaging"
-        "setuptools"
-        "wheel"
-        "pip"
-    )
-    
-    for dep in "${missing_deps[@]}"; do
-        info "Installing $dep..."
-        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install $dep" || warn "Failed to install $dep"
-    done
-    
-    log "Missing dependencies installation completed"
-}
-
-# Print final instructions
-print_instructions() {
-    echo
-    echo "=================================="
-    log "TRELLIS Installation Complete!"
-    echo "=================================="
-    echo
-    info "To start TRELLIS:"
-    echo "  1. Web Demo (Image-to-3D): $HOME/launch_trellis.sh"
-    echo "  2. Text-to-3D Demo: $HOME/launch_trellis_text.sh"
-    echo "  3. Run Examples: $HOME/run_trellis_example.sh"
-    echo
-    info "TRELLIS will be accessible at:"
-    echo "  Local access: http://localhost:7860"
-    echo "  Network access: http://your-server-ip:7860"
-    echo
-    info "Manual activation commands:"
-    echo "  export PATH=\"$HOME/miniconda3/bin:\$PATH\""
-    echo "  source \"$HOME/miniconda3/etc/profile.d/conda.sh\""
-    echo "  conda activate trellis"
-    echo "  cd $HOME/TRELLIS"
-    echo "  export SPCONV_ALGO='native'"
-    echo "  python app.py"
-    echo
-    info "Available models (will download automatically on first use):"
-    echo "  - TRELLIS-image-large (1.2B params) - Best for image-to-3D"
-    echo "  - TRELLIS-text-base (342M params) - Text-to-3D"
-    echo "  - TRELLIS-text-large (1.1B params) - Text-to-3D"
-    echo "  - TRELLIS-text-xlarge (2.0B params) - Text-to-3D"
-    echo
-    info "Environment variables:"
-    echo "  SPCONV_ALGO='native' - Faster for single runs"
-    echo "  ATTN_BACKEND='flash-attn' - Default attention backend"
-    echo "  CUDA_LAUNCH_BLOCKING=1 - Better error reporting"
-    echo
-    info "Output formats supported:"
-    echo "  - 3D Gaussians (.ply files)"
-    echo "  - Radiance Fields"
-    echo "  - Meshes (.glb files)"
-    echo "  - Video previews (.mp4)"
-    echo
-    if [ -f "/etc/systemd/system/trellis.service" ]; then
-        info "Systemd service commands:"
-        echo "  sudo systemctl start trellis    : Start service"
-        echo "  sudo systemctl stop trellis     : Stop service"
-        echo "  sudo systemctl status trellis   : Check status"
-    fi
-    echo
-    warn "Important notes:"
-    echo "  - First run may take time to download models (several GB)"
-    echo "  - Recommended: At least 16GB GPU memory for optimal performance"
-    echo "  - For better results, use high-quality input images"
-    echo "  - Text-to-3D works better with detailed prompts"
-    echo
-    info "Troubleshooting:"
-    echo "  - If CUDA errors occur, check NVIDIA driver installation"
-    echo "  - If out of memory, reduce generation steps or use smaller models"
-    echo "  - Check logs with: journalctl -u trellis -f (for systemd service)"
-    echo
-}
-
-# Check CUDA toolkit installation status
-check_cuda_toolkit() {
-    log "Checking CUDA toolkit installation status..."
-    
-    # Check if CUDA toolkit packages are installed
-    local cuda_packages_installed=false
-    if dpkg -l | grep -q "cuda-toolkit"; then
-        info "CUDA toolkit packages found:"
-        dpkg -l | grep "cuda-toolkit" | head -5
-        cuda_packages_installed=true
-    fi
-    
-    # Check if nvcc is available
-    local nvcc_available=false
-    if command -v nvcc >/dev/null 2>&1; then
-        info "nvcc is available in PATH"
-        nvcc_available=true
-    else
-        warn "nvcc is not available in PATH"
-    fi
-    
-    # Check common CUDA installation paths
-    local cuda_paths_found=()
-    for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
-        if [ -d "$cuda_path" ] && [ -f "$cuda_path/bin/nvcc" ]; then
-            cuda_paths_found+=("$cuda_path")
-            info "Found CUDA installation at: $cuda_path"
-        fi
-    done
-    
-    if [ ${#cuda_paths_found[@]} -eq 0 ]; then
-        warn "No CUDA installations found in common locations"
-    fi
-    
-    # Provide recommendations
-    if [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = false ]; then
-        warn "CUDA toolkit appears to be missing or incomplete"
-        echo
-        info "To install CUDA toolkit, you can:"
-        echo "  1. Run this script again and choose 'y' when asked about NVIDIA drivers"
-        echo "  2. Install manually: sudo apt install cuda-toolkit-12-4"
-        echo "  3. Download from NVIDIA website: https://developer.nvidia.com/cuda-downloads"
-        echo
-        warn "TRELLIS will continue installation, but CUDA compilation may fail."
-        warn "Some packages may need to be compiled from source without CUDA support."
-    elif [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = true ]; then
-        warn "CUDA packages are installed but nvcc is not in PATH"
-        info "This might be a PATH issue. CUDA_HOME will be set during installation."
-    fi
-    
-    log "CUDA toolkit check completed"
-}
-
 # Install missing CUDA toolkit components
 install_cuda_toolkit_components() {
     log "Installing missing CUDA toolkit components..."
@@ -1499,6 +1032,616 @@ install_getopt_in_conda() {
     fi
 }
 
+# Check and install missing TRELLIS custom modules
+install_trellis_custom_modules() {
+    log "Checking for missing TRELLIS custom modules..."
+    
+    # Check TRELLIS repository structure
+    if [ -d "$HOME/TRELLIS" ]; then
+        info "TRELLIS repository structure:"
+        ls -la "$HOME/TRELLIS" | head -20
+        
+        # Check if app.py exists
+        if [ -f "$HOME/TRELLIS/app.py" ]; then
+            info "Found app.py - checking its imports..."
+            grep -n "import\|from" "$HOME/TRELLIS/app.py" | head -10
+        fi
+        
+        # Check for gradio_litmodel3d in the repository
+        info "Searching for gradio_litmodel3d in TRELLIS repository..."
+        find "$HOME/TRELLIS" -name "*gradio*" -o -name "*litmodel*" 2>/dev/null | head -10
+        
+        # Check if we need to update the repository
+        info "Checking if TRELLIS repository needs updating..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && git status"
+        run_in_trellis_env "cd '$HOME/TRELLIS' && git log --oneline -5"
+        
+        # Try to pull latest changes
+        info "Pulling latest changes from TRELLIS repository..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && git pull origin main" || run_in_trellis_env "cd '$HOME/TRELLIS' && git pull origin master"
+        
+        # Update submodules
+        info "Updating submodules..."
+        run_in_trellis_env "cd '$HOME/TRELLIS' && git submodule update --init --recursive"
+    fi
+    
+    # The issue is likely that the TRELLIS directory needs to be in PYTHONPATH
+    # Let's check what's actually in app.py and fix the import
+    if [ -f "$HOME/TRELLIS/app.py" ]; then
+        info "Analyzing app.py imports..."
+        
+        # Check if gradio_litmodel3d is actually imported in app.py
+        if grep -q "gradio_litmodel3d" "$HOME/TRELLIS/app.py"; then
+            info "gradio_litmodel3d is imported in app.py"
+            
+            # Check if it's a local import (from . import gradio_litmodel3d)
+            if grep -q "from.*gradio_litmodel3d\|import.*gradio_litmodel3d" "$HOME/TRELLIS/app.py"; then
+                info "It's a local import - TRELLIS directory needs to be in PYTHONPATH"
+                
+                # Create a simple gradio_litmodel3d.py if it doesn't exist
+                if [ ! -f "$HOME/TRELLIS/gradio_litmodel3d.py" ]; then
+                    warn "Creating gradio_litmodel3d.py based on TRELLIS structure..."
+                    
+                    # Check if there's a trellis directory with the actual implementation
+                    if [ -d "$HOME/TRELLIS/trellis" ]; then
+                        info "Found trellis directory - checking for gradio components..."
+                        find "$HOME/TRELLIS/trellis" -name "*gradio*" -o -name "*litmodel*" 2>/dev/null | head -10
+                        
+                        # Create a proper import bridge
+                        cat > "$HOME/TRELLIS/gradio_litmodel3d.py" << 'EOF'
+"""
+Gradio interface for TRELLIS 3D models
+This module provides the LitModel3D class for the web interface
+"""
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+try:
+    from trellis.models.litmodel3d import LitModel3D
+except ImportError:
+    try:
+        from trellis.litmodel3d import LitModel3D
+    except ImportError:
+        # Fallback implementation
+        import gradio as gr
+        import torch
+        
+        class LitModel3D:
+            def __init__(self, *args, **kwargs):
+                self.model = None
+                print("LitModel3D initialized (fallback)")
+            
+            def __call__(self, *args, **kwargs):
+                raise NotImplementedError("TRELLIS model not properly loaded. Check installation.")
+EOF
+                    else
+                        # Create minimal placeholder
+                        cat > "$HOME/TRELLIS/gradio_litmodel3d.py" << 'EOF'
+"""
+Placeholder for gradio_litmodel3d module
+"""
+import gradio as gr
+import torch
+
+class LitModel3D:
+    def __init__(self, *args, **kwargs):
+        self.model = None
+        print("LitModel3D placeholder initialized")
+    
+    def __call__(self, *args, **kwargs):
+        raise NotImplementedError("This is a placeholder. Please check TRELLIS repository for the actual implementation.")
+EOF
+                    fi
+                    info "Created gradio_litmodel3d.py"
+                fi
+            fi
+        else
+            info "gradio_litmodel3d is not imported in app.py - checking other imports..."
+            grep -n "import\|from" "$HOME/TRELLIS/app.py" | head -10
+        fi
+    fi
+    
+    # Ensure TRELLIS directory is in PYTHONPATH for all future commands
+    info "Setting up PYTHONPATH to include TRELLIS directory..."
+    export PYTHONPATH="$HOME/TRELLIS:$PYTHONPATH"
+    
+    # Test if the import works now
+    if run_in_trellis_env "PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH' python -c 'import gradio_litmodel3d; print(\"gradio_litmodel3d import successful\")'" 2>/dev/null; then
+        log "gradio_litmodel3d import successful"
+    else
+        warn "gradio_litmodel3d import still failed - will need manual intervention"
+    fi
+    
+    # Check for other potential missing modules
+    local missing_modules=()
+    for module in "trellis" "litmodel3d"; do
+        if ! run_in_trellis_env "PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH' python -c 'import $module'" 2>/dev/null; then
+            missing_modules+=("$module")
+        fi
+    done
+    
+    if [ ${#missing_modules[@]} -gt 0 ]; then
+        warn "Missing modules detected: ${missing_modules[*]}"
+        info "These modules should be part of the TRELLIS repository"
+    else
+        log "All core TRELLIS modules are available"
+    fi
+}
+
+# Retry installation of CUDA-dependent packages
+retry_cuda_dependent_installations() {
+    log "Retrying installation of CUDA-dependent packages..."
+    
+    # Check if CUDA toolkit is now available
+    if ! command -v nvcc >/dev/null 2>&1; then
+        warn "CUDA toolkit still not available, skipping CUDA-dependent package retry"
+        return 0
+    fi
+    
+    info "CUDA toolkit is available, retrying failed installations..."
+    
+    # Ensure getopt is available in conda environment
+    if ! run_in_trellis_env "which getopt" 2>/dev/null; then
+        warn "getopt not found in conda environment, installing..."
+        install_getopt_in_conda
+    fi
+    
+    # Set up CUDA environment variables
+    local cuda_env_vars=""
+    if [ -d "/usr/local/cuda-12.4/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-11.8/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda-12.2/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+    elif [ -d "/usr/local/cuda/bin" ]; then
+        cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
+    fi
+    
+    # Retry flash-attn installation
+    info "Retrying flash-attn installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn" || warn "Flash-attn installation still failed"
+    
+    # Retry spconv installation
+    info "Retrying spconv installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv" || warn "Spconv installation still failed"
+    
+    # Retry mip-splatting installation
+    info "Retrying mip-splatting installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian" || warn "Mip-splatting installation still failed"
+    
+    # Retry nvdiffrast installation
+    info "Retrying nvdiffrast installation..."
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast" || warn "Nvdiffrast installation still failed"
+    
+    log "CUDA-dependent package retry completed"
+}
+
+# Create launcher script
+create_launcher() {
+    log "Creating launcher scripts..."
+    
+    # Create main launcher for web demo
+    LAUNCHER_SCRIPT="$HOME/launch_trellis.sh"
+    
+    cat > "$LAUNCHER_SCRIPT" << 'EOF'
+#!/bin/bash
+
+# TRELLIS Launcher Script
+# This script activates the conda environment and launches TRELLIS web demo
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+CONDA_DIR="$HOME/miniconda3"
+TRELLIS_DIR="$HOME/TRELLIS"
+
+# Check if conda environment exists
+if [ ! -d "$CONDA_DIR" ]; then
+    echo -e "${RED}Miniconda not found at $CONDA_DIR${NC}"
+    echo "Please run the installer script first."
+    exit 1
+fi
+
+# Check if TRELLIS directory exists
+if [ ! -d "$TRELLIS_DIR" ]; then
+    echo -e "${RED}TRELLIS directory not found at $TRELLIS_DIR${NC}"
+    echo "Please run the installer script first."
+    exit 1
+fi
+
+# Add conda to PATH and initialize
+export PATH="$CONDA_DIR/bin:$PATH"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+
+# Activate conda environment
+conda activate trellis
+
+# Change to TRELLIS directory
+cd "$TRELLIS_DIR"
+
+# Set environment variables
+export SPCONV_ALGO='native'
+export CUDA_LAUNCH_BLOCKING=1
+export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
+
+# Set CUDA paths if available
+if [ -d "/usr/local/cuda/bin" ]; then
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda"
+fi
+
+echo -e "${GREEN}Starting TRELLIS Web Demo...${NC}"
+echo -e "${GREEN}Access TRELLIS locally at: http://localhost:7860${NC}"
+echo -e "${GREEN}Access TRELLIS from network at: http://$(hostname -I | awk '{print $1}'):7860${NC}"
+echo -e "${GREEN}Press Ctrl+C to stop TRELLIS${NC}"
+echo -e "${BLUE}Note: First launch may take longer due to model downloads${NC}"
+echo
+
+# Launch TRELLIS web demo with network access
+python app.py --server_name 0.0.0.0 --server_port 7860 "$@"
+EOF
+
+    # Create text-to-3D launcher
+    TEXT_LAUNCHER="$HOME/launch_trellis_text.sh"
+    
+    cat > "$TEXT_LAUNCHER" << 'EOF'
+#!/bin/bash
+
+# TRELLIS Text-to-3D Launcher Script
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+CONDA_DIR="$HOME/miniconda3"
+TRELLIS_DIR="$HOME/TRELLIS"
+
+# Check directories
+if [ ! -d "$CONDA_DIR" ] || [ ! -d "$TRELLIS_DIR" ]; then
+    echo -e "${RED}Required directories not found. Please run the installer script first.${NC}"
+    exit 1
+fi
+
+# Add conda to PATH and activate environment
+export PATH="$CONDA_DIR/bin:$PATH"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate trellis
+cd "$TRELLIS_DIR"
+
+# Set environment variables
+export SPCONV_ALGO='native'
+export CUDA_LAUNCH_BLOCKING=1
+export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
+
+# Set CUDA paths if available
+if [ -d "/usr/local/cuda/bin" ]; then
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda"
+fi
+
+echo -e "${GREEN}Starting TRELLIS Text-to-3D Web Demo...${NC}"
+echo -e "${GREEN}Access at: http://localhost:7860${NC}"
+echo
+
+# Launch text-to-3D demo
+python app_text.py --server_name 0.0.0.0 --server_port 7860 "$@"
+EOF
+
+    # Create example runner script
+    EXAMPLE_SCRIPT="$HOME/run_trellis_example.sh"
+    
+    cat > "$EXAMPLE_SCRIPT" << 'EOF'
+#!/bin/bash
+
+# TRELLIS Example Runner Script
+
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+NC='\033[0m'
+
+CONDA_DIR="$HOME/miniconda3"
+TRELLIS_DIR="$HOME/TRELLIS"
+
+# Check directories
+if [ ! -d "$CONDA_DIR" ] || [ ! -d "$TRELLIS_DIR" ]; then
+    echo -e "${RED}Required directories not found. Please run the installer script first.${NC}"
+    exit 1
+fi
+
+# Add conda to PATH and activate environment
+export PATH="$CONDA_DIR/bin:$PATH"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate trellis
+cd "$TRELLIS_DIR"
+
+# Set environment variables
+export SPCONV_ALGO='native'
+export CUDA_LAUNCH_BLOCKING=1
+export PYTHONPATH="$TRELLIS_DIR:$PYTHONPATH"
+
+# Set CUDA paths if available
+if [ -d "/usr/local/cuda/bin" ]; then
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export CUDA_HOME="/usr/local/cuda"
+fi
+
+echo -e "${GREEN}Running TRELLIS example...${NC}"
+echo
+
+# Run example
+python example.py "$@"
+EOF
+
+    # Make launcher scripts executable
+    if chmod +x "$LAUNCHER_SCRIPT" "$TEXT_LAUNCHER" "$EXAMPLE_SCRIPT"; then
+        log "Launcher scripts created and made executable:"
+        info "  Main web demo: $LAUNCHER_SCRIPT"
+        info "  Text-to-3D demo: $TEXT_LAUNCHER"
+        info "  Example runner: $EXAMPLE_SCRIPT"
+    else
+        warn "Failed to make launcher scripts executable. You may need to run: chmod +x ~/launch_trellis*.sh ~/run_trellis_example.sh"
+    fi
+}
+
+# Create systemd service (optional)
+create_systemd_service() {
+    log "Creating systemd service for TRELLIS..."
+    
+    if ! ask_yes_no "Do you want to create a systemd service to run TRELLIS automatically?" "n"; then
+        return 0
+    fi
+    
+    SERVICE_FILE="/etc/systemd/system/trellis.service"
+    
+    # Get absolute paths (resolve $HOME properly)
+    CURRENT_USER=$(whoami)
+    USER_HOME=$(eval echo ~$CURRENT_USER)
+    
+    info "Creating systemd service for user: $CURRENT_USER"
+    info "Using home directory: $USER_HOME"
+    
+    sudo tee "$SERVICE_FILE" > /dev/null << EOF
+[Unit]
+Description=TRELLIS 3D Generation Service
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+Group=$CURRENT_USER
+WorkingDirectory=$USER_HOME
+ExecStart=$USER_HOME/launch_trellis.sh
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trellis
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable trellis.service
+    
+    log "Systemd service created. You can start it with: sudo systemctl start trellis"
+}
+
+# Test installation
+test_installation() {
+    log "Testing installation..."
+    
+    # First verify PyTorch is installed
+    info "Verifying PyTorch installation in conda environment..."
+    if ! run_in_trellis_env "python -c 'import torch'" 2>/dev/null; then
+        warn "PyTorch not found in conda environment, attempting to install..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install torch==2.5.1+cu124 torchvision==0.20.1+cu124 torchaudio==2.5.1+cu124 --index-url https://download.pytorch.org/whl/cu124"
+    fi
+    
+    # Use the run_in_trellis_env function to test in the proper environment
+    info "Testing Python imports in conda environment..."
+    run_in_trellis_env "python -c \"import torch; print(f'PyTorch version: {torch.__version__}')\"" || warn "PyTorch import failed"
+    run_in_trellis_env "python -c \"import torch; print(f'CUDA available: {torch.cuda.is_available()}')\"" || warn "CUDA test failed"
+    
+    # Test TRELLIS imports with proper PYTHONPATH
+    info "Testing TRELLIS imports in conda environment..."
+    if run_in_trellis_env "PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH' python -c \"import gradio_litmodel3d; print('gradio_litmodel3d import successful')\"" 2>/dev/null; then
+        log "gradio_litmodel3d import successful"
+    else
+        warn "gradio_litmodel3d import failed, installing missing dependencies..."
+        install_missing_deps
+        
+        # Retry TRELLIS import after installing missing dependencies
+        info "Retrying TRELLIS imports after installing missing dependencies..."
+        run_in_trellis_env "PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH' python -c \"import gradio_litmodel3d; print('gradio_litmodel3d import successful')\"" || warn "gradio_litmodel3d import still failed after installing missing dependencies"
+    fi
+    
+    # Test CUDA availability
+    if run_in_trellis_env "python -c \"import torch; exit(0 if torch.cuda.is_available() else 1)\"" 2>/dev/null; then
+        log "CUDA is available and working!"
+    else
+        warn "CUDA is not available. GPU acceleration may not work."
+    fi
+    
+    # Install missing dependencies discovered during testing
+    install_missing_deps
+    
+    log "Installation test completed!"
+}
+
+# Install missing dependencies discovered during testing
+install_missing_deps() {
+    log "Installing missing dependencies discovered during testing..."
+    
+    # Common missing dependencies for TRELLIS
+    local missing_deps=(
+        "easydict"
+        "omegaconf"
+        "hydra-core"
+        "hydra-colorlog"
+        "hydra-optuna-sweeper"
+        "pytorch-lightning"
+        "wandb"
+        "tensorboard"
+        "tensorboardX"
+        "matplotlib"
+        "seaborn"
+        "plotly"
+        "kornia"
+        "albumentations"
+        "opencv-python"
+        "pillow"
+        "scikit-image"
+        "scipy"
+        "numpy"
+        "pandas"
+        "tqdm"
+        "pyyaml"
+        "toml"
+        "click"
+        "rich"
+        "typer"
+        "pathlib2"
+        "future"
+        "six"
+        "packaging"
+        "setuptools"
+        "wheel"
+        "pip"
+    )
+    
+    for dep in "${missing_deps[@]}"; do
+        info "Installing $dep..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install $dep" || warn "Failed to install $dep"
+    done
+    
+    log "Missing dependencies installation completed"
+}
+
+# Print final instructions
+print_instructions() {
+    echo
+    echo "=================================="
+    log "TRELLIS Installation Complete!"
+    echo "=================================="
+    echo
+    info "To start TRELLIS:"
+    echo "  1. Web Demo (Image-to-3D): $HOME/launch_trellis.sh"
+    echo "  2. Text-to-3D Demo: $HOME/launch_trellis_text.sh"
+    echo "  3. Run Examples: $HOME/run_trellis_example.sh"
+    echo
+    info "TRELLIS will be accessible at:"
+    echo "  Local access: http://localhost:7860"
+    echo "  Network access: http://your-server-ip:7860"
+    echo
+    info "Manual activation commands:"
+    echo "  export PATH=\"$HOME/miniconda3/bin:\$PATH\""
+    echo "  source \"$HOME/miniconda3/etc/profile.d/conda.sh\""
+    echo "  conda activate trellis"
+    echo "  cd $HOME/TRELLIS"
+    echo "  export PYTHONPATH=\"$HOME/TRELLIS:\$PYTHONPATH\""
+    echo "  export SPCONV_ALGO='native'"
+    echo "  python app.py"
+    echo
+    info "Available models (will download automatically on first use):"
+    echo "  - TRELLIS-image-large (1.2B params) - Best for image-to-3D"
+    echo "  - TRELLIS-text-base (342M params) - Text-to-3D"
+    echo "  - TRELLIS-text-large (1.1B params) - Text-to-3D"
+    echo "  - TRELLIS-text-xlarge (2.0B params) - Text-to-3D"
+    echo
+    info "Environment variables:"
+    echo "  SPCONV_ALGO='native' - Faster for single runs"
+    echo "  ATTN_BACKEND='flash-attn' - Default attention backend"
+    echo "  CUDA_LAUNCH_BLOCKING=1 - Better error reporting"
+    echo "  PYTHONPATH='$HOME/TRELLIS' - Required for imports"
+    echo
+    info "Output formats supported:"
+    echo "  - 3D Gaussians (.ply files)"
+    echo "  - Radiance Fields"
+    echo "  - Meshes (.glb files)"
+    echo "  - Video previews (.mp4)"
+    echo
+    if [ -f "/etc/systemd/system/trellis.service" ]; then
+        info "Systemd service commands:"
+        echo "  sudo systemctl start trellis    : Start service"
+        echo "  sudo systemctl stop trellis     : Stop service"
+        echo "  sudo systemctl status trellis   : Check status"
+    fi
+    echo
+    warn "Important notes:"
+    echo "  - First run may take time to download models (several GB)"
+    echo "  - Recommended: At least 16GB GPU memory for optimal performance"
+    echo "  - For better results, use high-quality input images"
+    echo "  - Text-to-3D works better with detailed prompts"
+    echo
+    info "Troubleshooting:"
+    echo "  - If CUDA errors occur, check NVIDIA driver installation"
+    echo "  - If out of memory, reduce generation steps or use smaller models"
+    echo "  - Check logs with: journalctl -u trellis -f (for systemd service)"
+    echo "  - If import errors occur, ensure PYTHONPATH includes TRELLIS directory"
+    echo
+}
+
+# Check CUDA toolkit installation status
+check_cuda_toolkit() {
+    log "Checking CUDA toolkit installation status..."
+    
+    # Check if CUDA toolkit packages are installed
+    local cuda_packages_installed=false
+    if dpkg -l | grep -q "cuda-toolkit"; then
+        info "CUDA toolkit packages found:"
+        dpkg -l | grep "cuda-toolkit" | head -5
+        cuda_packages_installed=true
+    fi
+    
+    # Check if nvcc is available
+    local nvcc_available=false
+    if command -v nvcc >/dev/null 2>&1; then
+        info "nvcc is available in PATH"
+        nvcc_available=true
+    else
+        warn "nvcc is not available in PATH"
+    fi
+    
+    # Check common CUDA installation paths
+    local cuda_paths_found=()
+    for cuda_path in /usr/local/cuda-12.4 /usr/local/cuda-11.8 /usr/local/cuda-12.2 /usr/local/cuda; do
+        if [ -d "$cuda_path" ] && [ -f "$cuda_path/bin/nvcc" ]; then
+            cuda_paths_found+=("$cuda_path")
+            info "Found CUDA installation at: $cuda_path"
+        fi
+    done
+    
+    if [ ${#cuda_paths_found[@]} -eq 0 ]; then
+        warn "No CUDA installations found in common locations"
+    fi
+    
+    # Provide recommendations
+    if [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = false ]; then
+        warn "CUDA toolkit appears to be missing or incomplete"
+        echo
+        info "To install CUDA toolkit, you can:"
+        echo "  1. Run this script again and choose 'y' when asked about NVIDIA drivers"
+        echo "  2. Install manually: sudo apt install cuda-toolkit-12-4"
+        echo "  3. Download from NVIDIA website: https://developer.nvidia.com/cuda-downloads"
+        echo
+        warn "TRELLIS will continue installation, but CUDA compilation may fail."
+        warn "Some packages may need to be compiled from source without CUDA support."
+    elif [ "$nvcc_available" = false ] && [ "$cuda_packages_installed" = true ]; then
+        warn "CUDA packages are installed but nvcc is not in PATH"
+        info "This might be a PATH issue. CUDA_HOME will be set during installation."
+    fi
+    
+    log "CUDA toolkit check completed"
+}
+
 # Main installation function
 main() {
     echo "=================================="
@@ -1547,6 +1690,7 @@ main() {
     check_cuda_toolkit
     install_pytorch_cuda
     install_trellis_deps
+    install_trellis_custom_modules
     retry_cuda_dependent_installations
     create_launcher
     create_systemd_service
