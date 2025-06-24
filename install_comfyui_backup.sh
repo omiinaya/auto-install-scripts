@@ -150,121 +150,6 @@ install_nvidia_drivers() {
     log "NVIDIA drivers installed successfully"
 }
 
-# Install nvcc compiler
-install_nvcc() {
-    log "Ensuring nvcc compiler is installed..."
-    
-    # Check if nvcc is already available
-    if command -v nvcc >/dev/null 2>&1; then
-        info "nvcc already available at: $(which nvcc)"
-        nvcc --version | head -1
-        return 0
-    fi
-    
-    info "nvcc not found, installing CUDA development tools..."
-    
-    # Install comprehensive CUDA development packages
-    sudo apt update
-    
-    # First try the standard CUDA packages that should be available
-    info "Attempting to install CUDA toolkit packages..."
-    sudo apt install -y \
-        cuda-toolkit-12-6 \
-        cuda-compiler-12-6 \
-        cuda-nvcc-12-6 \
-        cuda-toolkit-config-common \
-        cuda-runtime-12-6 \
-        cuda-drivers || warn "Some primary CUDA packages could not be installed"
-    
-    # If that fails, try installing the full CUDA toolkit
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Primary packages failed, trying full CUDA installation..."
-        sudo apt install -y cuda || warn "Full CUDA installation failed"
-    fi
-    
-    # If still no nvcc, try alternative approaches
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Trying alternative CUDA package names..."
-        sudo apt install -y \
-            cuda-toolkit \
-            cuda-nvcc \
-            cuda-compiler \
-            libcuda1 \
-            libcudart12 || warn "Alternative CUDA packages failed"
-    fi
-    
-    # Last resort: try to install from nvidia-cuda-toolkit if available
-    if ! command -v nvcc >/dev/null 2>&1; then
-        info "Trying nvidia-cuda-toolkit as last resort..."
-        sudo apt install -y nvidia-cuda-toolkit || warn "nvidia-cuda-toolkit not available"
-    fi
-    
-    # Refresh PATH to pick up newly installed binaries
-    export PATH="/usr/bin:/usr/local/bin:/usr/local/cuda/bin:/usr/local/cuda-12/bin:/usr/local/cuda-12.6/bin:/usr/local/cuda-12.9/bin:$PATH"
-    hash -r
-    
-    # Search for nvcc in common locations (both /usr and /usr/local)
-    info "Searching for nvcc in the system..."
-    NVCC_LOCATION=""
-    
-    # Check common CUDA installation paths
-    for cuda_path in /usr/local/cuda-12.9/bin/nvcc /usr/local/cuda-12.6/bin/nvcc /usr/local/cuda-12.4/bin/nvcc /usr/local/cuda-12/bin/nvcc /usr/local/cuda/bin/nvcc; do
-        if [ -f "$cuda_path" ]; then
-            NVCC_LOCATION="$cuda_path"
-            info "Found nvcc at: $NVCC_LOCATION"
-            break
-        fi
-    done
-    
-    # If not found in common locations, search broadly
-    if [ -z "$NVCC_LOCATION" ]; then
-        NVCC_LOCATION=$(find /usr -name nvcc -type f 2>/dev/null | head -1)
-        if [ -n "$NVCC_LOCATION" ]; then
-            info "Found nvcc at: $NVCC_LOCATION"
-        fi
-    fi
-    
-    # Set up nvcc globally if found
-    if [ -n "$NVCC_LOCATION" ]; then
-        # Create symlink in /usr/local/bin (which is in everyone's PATH)
-        sudo ln -sf "$NVCC_LOCATION" /usr/local/bin/nvcc
-        info "Created global symlink: /usr/local/bin/nvcc -> $NVCC_LOCATION"
-        
-        # Also create symlinks for other CUDA tools if they exist
-        NVCC_DIR=$(dirname "$NVCC_LOCATION")
-        for tool in nvprof nsight-compute nsight-systems; do
-            if [ -f "$NVCC_DIR/$tool" ]; then
-                sudo ln -sf "$NVCC_DIR/$tool" "/usr/local/bin/$tool"
-                info "Created symlink: /usr/local/bin/$tool"
-            fi
-        done
-        
-        # Add the CUDA bin directory to system PATH permanently
-        CUDA_HOME=$(dirname "$NVCC_DIR")
-        sudo tee /etc/profile.d/cuda.sh > /dev/null << EOF
-# CUDA tools PATH (added by ComfyUI installer)
-export PATH="$NVCC_DIR:\$PATH"
-export CUDA_HOME="$CUDA_HOME"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:\$LD_LIBRARY_PATH"
-EOF
-        info "Created /etc/profile.d/cuda.sh for system-wide CUDA environment"
-        info "CUDA_HOME set to: $CUDA_HOME"
-        
-        # Verify the symlink works
-        if command -v nvcc >/dev/null 2>&1; then
-            log "nvcc successfully configured at: $(which nvcc)"
-            nvcc --version | head -1
-        else
-            warn "nvcc symlink created but not immediately available"
-            info "Run 'source /etc/profile.d/cuda.sh' or restart your shell"
-        fi
-    else
-        warn "Could not find nvcc anywhere in the system"
-        warn "CUDA development tools may not be properly installed"
-        info "You may need to install CUDA toolkit manually"
-    fi
-}
-
 # Create virtual environment
 create_venv() {
     log "Creating Python virtual environment..."
@@ -367,103 +252,6 @@ install_additional_deps() {
         matplotlib
     
     log "Additional dependencies installed"
-}
-
-# Download essential models using comfy-cli
-download_essential_models() {
-    log "Downloading essential models..."
-    
-    if ! ask_yes_no "Do you want to download essential models (SD 1.5, SDXL, VAE)? This will take several GB of space." "y"; then
-        info "Skipping model download. You can download models manually later."
-        return 0
-    fi
-    
-    # Activate virtual environment
-    source "$HOME/comfy-env/bin/activate"
-    
-    # Change to ComfyUI directory for comfy-cli commands
-    cd "$HOME/comfy"
-    
-    # Download SD 1.5 (the one causing the error) using comfy-cli
-    info "Downloading Stable Diffusion 1.5 using comfy-cli..."
-    if command -v comfy >/dev/null 2>&1; then
-        if comfy model download --url https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors --relative-path models/checkpoints; then
-            log "SD 1.5 downloaded successfully using comfy-cli"
-        else
-            warn "comfy-cli download failed, trying wget..."
-            mkdir -p "$HOME/comfy/models/checkpoints"
-            cd "$HOME/comfy/models/checkpoints"
-            if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
-                log "SD 1.5 downloaded successfully using wget"
-            else
-                warn "Failed to download SD 1.5 model"
-            fi
-        fi
-    else
-        warn "comfy-cli not available, using wget..."
-        mkdir -p "$HOME/comfy/models/checkpoints"
-        cd "$HOME/comfy/models/checkpoints"
-        if wget -O v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.safetensors; then
-            log "SD 1.5 downloaded successfully using wget"
-        else
-            warn "Failed to download SD 1.5 model"
-        fi
-    fi
-    
-    # Download SDXL Base (optional)
-    if ask_yes_no "Do you want to download SDXL Base model? (6.6GB)" "n"; then
-        info "Downloading SDXL Base..."
-        cd "$HOME/comfy"
-        if command -v comfy >/dev/null 2>&1; then
-            if comfy model download --url https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors --relative-path models/checkpoints; then
-                log "SDXL Base downloaded successfully using comfy-cli"
-            else
-                warn "comfy-cli download failed, trying wget..."
-                cd "$HOME/comfy/models/checkpoints"
-                if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
-                    log "SDXL Base downloaded successfully using wget"
-                else
-                    warn "Failed to download SDXL Base model"
-                fi
-            fi
-        else
-            cd "$HOME/comfy/models/checkpoints"
-            if wget -O sd_xl_base_1.0.safetensors https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors; then
-                log "SDXL Base downloaded successfully using wget"
-            else
-                warn "Failed to download SDXL Base model"
-            fi
-        fi
-    fi
-    
-    # Download VAE
-    info "Downloading VAE model..."
-    cd "$HOME/comfy"
-    if command -v comfy >/dev/null 2>&1; then
-        if comfy model download --url https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors --relative-path models/vae; then
-            log "VAE model downloaded successfully using comfy-cli"
-        else
-            warn "comfy-cli download failed, trying wget..."
-            mkdir -p "$HOME/comfy/models/vae"
-            cd "$HOME/comfy/models/vae"
-            if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
-                log "VAE model downloaded successfully using wget"
-            else
-                warn "Failed to download VAE model"
-            fi
-        fi
-    else
-        mkdir -p "$HOME/comfy/models/vae"
-        cd "$HOME/comfy/models/vae"
-        if wget -O vae-ft-mse-840000-ema-pruned.safetensors https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors; then
-            log "VAE model downloaded successfully using wget"
-        else
-            warn "Failed to download VAE model"
-        fi
-    fi
-    
-    log "Model download completed!"
-    info "Models are stored in: $HOME/comfy/models/"
 }
 
 # Create launcher script
@@ -655,7 +443,6 @@ main() {
     install_basic_deps
     install_python
     install_nvidia_drivers
-    install_nvcc
     create_venv
     install_comfy_cli
     install_comfyui
@@ -664,7 +451,6 @@ main() {
     create_launcher
     create_systemd_service
     test_installation
-    download_essential_models
     print_instructions
 }
 
