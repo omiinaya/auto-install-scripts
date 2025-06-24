@@ -856,7 +856,7 @@ install_trellis_deps() {
     
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
-    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord easydict"
     
     # Install cuDNN via conda (since it's not available as system package on Debian 12)
     info "Installing cuDNN via conda..."
@@ -1139,7 +1139,16 @@ test_installation() {
     
     # Test TRELLIS imports
     info "Testing TRELLIS imports in conda environment..."
-    run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" || warn "TRELLIS import failed"
+    if run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" 2>/dev/null; then
+        log "TRELLIS imports successful"
+    else
+        warn "TRELLIS import failed, installing missing dependencies..."
+        install_missing_deps
+        
+        # Retry TRELLIS import after installing missing dependencies
+        info "Retrying TRELLIS imports after installing missing dependencies..."
+        run_in_trellis_env "python -c \"from trellis.pipelines import TrellisImageTo3DPipeline; print('TRELLIS imports successful')\"" || warn "TRELLIS import still failed after installing missing dependencies"
+    fi
     
     # Test CUDA availability
     if run_in_trellis_env "python -c \"import torch; exit(0 if torch.cuda.is_available() else 1)\"" 2>/dev/null; then
@@ -1148,7 +1157,59 @@ test_installation() {
         warn "CUDA is not available. GPU acceleration may not work."
     fi
     
+    # Install missing dependencies discovered during testing
+    install_missing_deps
+    
     log "Installation test completed!"
+}
+
+# Install missing dependencies discovered during testing
+install_missing_deps() {
+    log "Installing missing dependencies discovered during testing..."
+    
+    # Common missing dependencies for TRELLIS
+    local missing_deps=(
+        "easydict"
+        "omegaconf"
+        "hydra-core"
+        "hydra-colorlog"
+        "hydra-optuna-sweeper"
+        "pytorch-lightning"
+        "wandb"
+        "tensorboard"
+        "tensorboardX"
+        "matplotlib"
+        "seaborn"
+        "plotly"
+        "kornia"
+        "albumentations"
+        "opencv-python"
+        "pillow"
+        "scikit-image"
+        "scipy"
+        "numpy"
+        "pandas"
+        "tqdm"
+        "pyyaml"
+        "toml"
+        "click"
+        "rich"
+        "typer"
+        "pathlib2"
+        "future"
+        "six"
+        "packaging"
+        "setuptools"
+        "wheel"
+        "pip"
+    )
+    
+    for dep in "${missing_deps[@]}"; do
+        info "Installing $dep..."
+        run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install $dep" || warn "Failed to install $dep"
+    done
+    
+    log "Missing dependencies installation completed"
 }
 
 # Print final instructions
