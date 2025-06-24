@@ -19,6 +19,11 @@ This repository contains comprehensive installation scripts for popular AI model
 - **Features**: Text-to-image, image-to-image, inpainting, extensions, LoRA support
 - **Best for**: Traditional Stable Diffusion workflows with web interface
 
+### 4. FramePack Installer (`install_framepack.sh`)
+- **Purpose**: Next-frame prediction video generation model
+- **Features**: Image-to-video, progressive video generation, TeaCache acceleration
+- **Best for**: High-quality video generation from images with minimal GPU memory requirements
+
 ## Features
 
 All scripts provide:
@@ -63,6 +68,13 @@ chmod +x install_sd_webui.sh
 ./install_sd_webui.sh
 ```
 
+### FramePack
+```bash
+wget https://raw.githubusercontent.com/your-repo/install-scripts/main/install_framepack.sh
+chmod +x install_framepack.sh
+./install_framepack.sh
+```
+
 ## What Gets Installed
 
 ### System Packages (All Scripts)
@@ -81,6 +93,7 @@ chmod +x install_sd_webui.sh
 - **ComfyUI**: `~/comfy/` with virtual environment `~/comfy-env/`
 - **TRELLIS**: `~/TRELLIS/` with conda environment `~/miniconda3/envs/trellis`
 - **Stable Diffusion WebUI**: `~/stable-diffusion-webui/` with conda environment `~/miniconda3/envs/sdwebui`
+- **FramePack**: `~/framepack/` with virtual environment `~/framepack-env/`
 
 ## Usage
 
