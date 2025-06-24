@@ -1,17 +1,36 @@
-# ComfyUI Linux Installer for Debian 12 (Proxmox Container)
+# AI Model Installation Scripts for Debian 12 (Proxmox Container)
 
-This script provides a comprehensive installation of ComfyUI with NVIDIA GPU support specifically designed for Debian 12 systems running in Proxmox containers.
+This repository contains comprehensive installation scripts for popular AI models with NVIDIA GPU support, specifically designed for Debian 12 systems running in Proxmox containers.
+
+## Available Installation Scripts
+
+### 1. ComfyUI Installer (`install_comfyui.sh`)
+- **Purpose**: Node-based UI for Stable Diffusion workflows
+- **Features**: Advanced workflow creation, custom nodes, ComfyUI-Manager
+- **Best for**: Power users who want fine-grained control over image generation
+
+### 2. TRELLIS Installer (`install_trellis.sh`)
+- **Purpose**: Microsoft's 3D asset generation model
+- **Features**: Image-to-3D, Text-to-3D, multiple output formats (Gaussians, Meshes, GLB)
+- **Best for**: 3D content creation and asset generation
+
+### 3. Stable Diffusion WebUI Installer (`install_sd_webui.sh`)
+- **Purpose**: AUTOMATIC1111's web interface for Stable Diffusion
+- **Features**: Text-to-image, image-to-image, inpainting, extensions, LoRA support
+- **Best for**: Traditional Stable Diffusion workflows with web interface
 
 ## Features
 
+All scripts provide:
 - **Complete dependency installation** for fresh Debian 12 systems
 - **NVIDIA GPU support** with proper CUDA drivers for Proxmox containers
-- **Virtual environment setup** to isolate ComfyUI installation
-- **Automatic ComfyUI installation** using the official comfy-cli tool
+- **Conda environment management** for isolated installations
+- **Automatic model installation** using official methods
 - **PyTorch with CUDA support** for GPU acceleration
-- **Launcher script** for easy ComfyUI startup
-- **Optional systemd service** for automatic startup
+- **Launcher scripts** for easy startup
+- **Optional systemd services** for automatic startup
 - **Installation testing** to verify everything works
+- **Robust error handling** and user-friendly prompts
 
 ## Prerequisites
 
@@ -19,216 +38,188 @@ This script provides a comprehensive installation of ComfyUI with NVIDIA GPU sup
 - NVIDIA GPU passed through to the container
 - User account with sudo privileges
 - Internet connection for downloading packages
+- Sufficient disk space (20-50GB depending on model)
 
-## Installation
+## Quick Installation
 
-1. **Download the installer script:**
-   ```bash
-   wget https://your-server.com/install_comfyui.sh
-   # or
-   curl -O https://your-server.com/install_comfyui.sh
-   ```
+### ComfyUI
+```bash
+wget https://raw.githubusercontent.com/your-repo/install-scripts/main/install_comfyui.sh
+chmod +x install_comfyui.sh
+./install_comfyui.sh
+```
 
-2. **Make it executable:**
-   ```bash
-   chmod +x install_comfyui.sh
-   ```
+### TRELLIS
+```bash
+wget https://raw.githubusercontent.com/your-repo/install-scripts/main/install_trellis.sh
+chmod +x install_trellis.sh
+./install_trellis.sh
+```
 
-3. **Run the installer:**
-   ```bash
-   ./install_comfyui.sh
-   ```
-
-The script will:
-- Update your system packages
-- Install all necessary dependencies (Python, Git, build tools, etc.)
-- Install NVIDIA drivers and CUDA support
-- Create a Python virtual environment
-- Install ComfyUI using comfy-cli
-- Install PyTorch with CUDA support
-- Create a launcher script
-- Optionally create a systemd service
-- Test the installation
+### Stable Diffusion WebUI
+```bash
+wget https://raw.githubusercontent.com/your-repo/install-scripts/main/install_sd_webui.sh
+chmod +x install_sd_webui.sh
+./install_sd_webui.sh
+```
 
 ## What Gets Installed
 
-### System Packages
-- Python 3.11+ with pip, venv, and development tools
-- Git, curl, wget, build-essential
+### System Packages (All Scripts)
+- Python 3.10/3.11 with pip, venv, and development tools
+- Git, curl, wget, build-essential, cmake, ninja-build
 - NVIDIA CUDA drivers and kernel modules
+- Graphics libraries (OpenCV, FFmpeg, etc.)
 - Additional utilities (vim, htop, screen, tmux)
 
-### Python Packages (in virtual environment)
-- comfy-cli (official ComfyUI management tool)
-- PyTorch with CUDA 12.4 support
-- ComfyUI and ComfyUI-Manager
-- Common dependencies (numpy, opencv-python, pillow, etc.)
+### Python Packages (Conda Environment)
+- PyTorch with CUDA support
+- Model-specific packages and dependencies
+- Common ML libraries (numpy, opencv-python, pillow, etc.)
 
 ### Installation Locations
-- **ComfyUI**: `~/comfy/`
-- **Virtual Environment**: `~/comfy-env/`
-- **Launcher Script**: `~/launch_comfyui.sh`
-- **Systemd Service**: `/etc/systemd/system/comfyui.service` (optional)
+- **ComfyUI**: `~/comfy/` with virtual environment `~/comfy-env/`
+- **TRELLIS**: `~/TRELLIS/` with conda environment `~/miniconda3/envs/trellis`
+- **Stable Diffusion WebUI**: `~/stable-diffusion-webui/` with conda environment `~/miniconda3/envs/sdwebui`
 
 ## Usage
 
-### Starting ComfyUI
-
-**Option 1: Using the launcher script (recommended)**
+### ComfyUI
 ```bash
+# Start ComfyUI
 ~/launch_comfyui.sh
+
+# Access at: http://localhost:8188
 ```
 
-**Option 2: Manual launch**
+### TRELLIS
 ```bash
-source ~/comfy-env/bin/activate
-cd ~/comfy
-comfy launch
+# Start TRELLIS web demo
+~/launch_trellis.sh
+
+# Start text-to-3D demo
+~/launch_trellis_text.sh
+
+# Access at: http://localhost:7860
 ```
 
-**Option 3: Using systemd service (if installed)**
+### Stable Diffusion WebUI
 ```bash
-sudo systemctl start comfyui
+# Start with basic options
+~/launch_sdwebui.sh
+
+# Start with custom options
+~/launch_sdwebui_options.sh --medvram --api
+
+# Access at: http://localhost:7860
 ```
 
-### Accessing ComfyUI
-- **Local access**: http://localhost:8188
-- **Network access**: http://your-server-ip:8188 (enabled by default)
+## Model Recommendations
 
-### Common Launch Options
+### ComfyUI Models
+- **Stable Diffusion 1.5**: https://huggingface.co/runwayml/stable-diffusion-v1-5
+- **Stable Diffusion XL**: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
+- **SDXL Turbo**: https://huggingface.co/stabilityai/sdxl-turbo
 
-```bash
-# Use different port
-~/launch_comfyui.sh -- --port 8080
+### TRELLIS Models
+- **TRELLIS-image-large**: 1.2B parameters for image-to-3D
+- **TRELLIS-text-base**: 342M parameters for text-to-3D
+- **TRELLIS-text-large**: 1.1B parameters for text-to-3D
 
-# Low VRAM mode (for GPUs with limited memory)
-~/launch_comfyui.sh -- --lowvram
+### Stable Diffusion WebUI Models
+- **Stable Diffusion 1.5**: https://huggingface.co/runwayml/stable-diffusion-v1-5
+- **Stable Diffusion 2.1**: https://huggingface.co/stabilityai/stable-diffusion-2-1
+- **Stable Diffusion XL**: https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0
 
-# CPU-only mode (if GPU issues)
-~/launch_comfyui.sh -- --cpu
+## System Requirements
 
-# Restrict to local access only (disable network access)
-~/launch_comfyui.sh -- --listen 127.0.0.1
+### Minimum Requirements
+- **GPU**: NVIDIA GPU with 4GB+ VRAM
+- **RAM**: 8GB+ system RAM
+- **Storage**: 20GB+ free space
+- **OS**: Debian 12 (Proxmox container recommended)
 
-# Background mode
-source ~/comfy-env/bin/activate
-comfy launch --background
-```
-
-### Managing Models
-
-```bash
-# Activate virtual environment first
-source ~/comfy-env/bin/activate
-
-# Download a model
-comfy model download --url https://huggingface.co/runwayml/stable-diffusion-v1-5/resolve/main/v1-5-pruned.safetensors --relative-path models/checkpoints
-
-# List installed models
-ls ~/comfy/models/checkpoints/
-```
-
-### Systemd Service Management (if installed)
-
-```bash
-# Start ComfyUI service
-sudo systemctl start comfyui
-
-# Stop ComfyUI service
-sudo systemctl stop comfyui
-
-# Check service status
-sudo systemctl status comfyui
-
-# View service logs
-sudo journalctl -u comfyui -f
-```
+### Recommended Requirements
+- **GPU**: NVIDIA GPU with 8GB+ VRAM (16GB+ for TRELLIS)
+- **RAM**: 16GB+ system RAM
+- **Storage**: 50GB+ free space
+- **OS**: Debian 12 with GPU passthrough
 
 ## Troubleshooting
 
-### GPU Not Detected
-If CUDA is not working:
-1. Verify GPU passthrough in Proxmox
-2. Check NVIDIA driver installation:
-   ```bash
-   nvidia-smi
-   ```
-3. Test CUDA in Python:
-   ```bash
-   source ~/comfy-env/bin/activate
-   python3 -c "import torch; print(torch.cuda.is_available())"
-   ```
+### Common Issues
 
-### Port Already in Use
-If port 8188 is busy:
+#### GPU Not Detected
 ```bash
-~/launch_comfyui.sh -- --port 8080
+# Check GPU passthrough
+nvidia-smi
+
+# Test CUDA in Python
+python -c "import torch; print(torch.cuda.is_available())"
 ```
 
-### Memory Issues
-For low VRAM GPUs:
-```bash
-~/launch_comfyui.sh -- --lowvram
-```
+#### Port Conflicts
+- **ComfyUI**: Default port 8188, change with `--port 8080`
+- **TRELLIS**: Default port 7860, change in launcher script
+- **Stable Diffusion WebUI**: Default port 7860, change with `--port 8080`
 
-### Permission Issues
+#### Memory Issues
+- **ComfyUI**: Use `--lowvram` flag
+- **TRELLIS**: Reduce generation steps or use smaller models
+- **Stable Diffusion WebUI**: Use `--medvram` or `--lowvram` flags
+
+#### Permission Issues
 Ensure your user has sudo privileges and can write to the home directory.
 
-### Network Access Issues
-Network access is enabled by default. To disable it and restrict to local access only:
-```bash
-~/launch_comfyui.sh -- --listen 127.0.0.1
-```
+### Getting Help
 
-## Updating ComfyUI
+1. **Check the logs**: Each script provides detailed logging
+2. **Test installation**: All scripts include installation testing
+3. **Verify CUDA**: Ensure NVIDIA drivers are properly installed
+4. **Check disk space**: Ensure sufficient free space for models
 
+## Updating
+
+### ComfyUI
 ```bash
 source ~/comfy-env/bin/activate
 cd ~/comfy
 comfy update
 ```
 
-## Uninstalling
-
-To remove ComfyUI:
+### TRELLIS
 ```bash
-# Remove directories
-rm -rf ~/comfy ~/comfy-env
-
-# Remove launcher script
-rm ~/launch_comfyui.sh
-
-# Remove systemd service (if installed)
-sudo systemctl stop comfyui
-sudo systemctl disable comfyui
-sudo rm /etc/systemd/system/comfyui.service
-sudo systemctl daemon-reload
+cd ~/TRELLIS
+git pull origin main
 ```
 
-## Support
+### Stable Diffusion WebUI
+```bash
+cd ~/stable-diffusion-webui
+git pull origin master
+```
 
-For issues specific to this installer script, check:
-1. That you're running on Debian 12
-2. That your user has sudo privileges
-3. That the NVIDIA GPU is properly passed through in Proxmox
-4. That you have sufficient disk space (at least 10GB recommended)
+## Uninstalling
 
-For ComfyUI-specific issues, refer to the [official ComfyUI documentation](https://github.com/comfyanonymous/ComfyUI).
+### ComfyUI
+```bash
+rm -rf ~/comfy ~/comfy-env ~/launch_comfyui.sh
+```
 
-## Script Details
+### TRELLIS
+```bash
+rm -rf ~/TRELLIS ~/miniconda3/envs/trellis ~/launch_trellis*.sh ~/run_trellis_example.sh
+```
 
-The installer performs these steps in order:
-1. System package updates
-2. Basic dependency installation
-3. Python and development tools setup
-4. NVIDIA driver installation (Proxmox-specific)
-5. Virtual environment creation
-6. Comfy-CLI installation
-7. ComfyUI installation
-8. PyTorch with CUDA installation
-9. Additional Python packages
-10. Launcher script creation
-11. Optional systemd service setup
-12. Installation verification
+### Stable Diffusion WebUI
+```bash
+rm -rf ~/stable-diffusion-webui ~/miniconda3/envs/sdwebui ~/launch_sdwebui*.sh
+```
 
-The entire process typically takes 10-30 minutes depending on your system and internet connection. 
+## Contributing
+
+Feel free to submit issues, feature requests, or pull requests to improve these installation scripts.
+
+## License
+
+These scripts are provided as-is for educational and personal use. Please respect the licenses of the individual AI models and tools being installed. 

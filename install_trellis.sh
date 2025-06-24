@@ -734,18 +734,19 @@ install_trellis_deps() {
     
     # Define CUDA environment variables for this session
     local cuda_path=""
+    local cuda_env_vars=""
     if [ -d "/usr/local/cuda-12.4/bin" ]; then
         cuda_path="/usr/local/cuda-12.4"
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
+        cuda_env_vars="export PATH='/usr/local/cuda-12.4/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.4'; export LD_LIBRARY_PATH='/usr/local/cuda-12.4/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda-11.8/bin" ]; then
         cuda_path="/usr/local/cuda-11.8"
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
+        cuda_env_vars="export PATH='/usr/local/cuda-11.8/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-11.8'; export LD_LIBRARY_PATH='/usr/local/cuda-11.8/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda-12.2/bin" ]; then
         cuda_path="/usr/local/cuda-12.2"
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
+        cuda_env_vars="export PATH='/usr/local/cuda-12.2/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda-12.2'; export LD_LIBRARY_PATH='/usr/local/cuda-12.2/lib64:\$LD_LIBRARY_PATH';"
     elif [ -d "/usr/local/cuda/bin" ]; then
         cuda_path="/usr/local/cuda"
-        CUDA_ENV_VARS="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
+        cuda_env_vars="export PATH='/usr/local/cuda/bin:\$PATH'; export CUDA_HOME='/usr/local/cuda'; export LD_LIBRARY_PATH='/usr/local/cuda/lib64:\$LD_LIBRARY_PATH';"
     fi
     
     info "Using conda environment: trellis"
@@ -762,41 +763,41 @@ install_trellis_deps() {
     
     # Install dependencies using the setup script step by step (in conda environment)
     info "Installing basic dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --basic"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --basic"
     
     info "Installing xformers (compatible version for PyTorch 2.5.1)..."
     # Install specific xformers version compatible with PyTorch 2.5.1
-    run_in_trellis_env "$CUDA_ENV_VARS pip install xformers==0.0.28.post3 --no-deps"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install xformers==0.0.28.post3 --no-deps"
     # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --xformers" || warn "Setup script xformers step failed, but compatible version already installed"
     
     info "Installing flash-attn..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --flash-attn"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --flash-attn"
     
     info "Installing diffoctreerast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --diffoctreerast"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --diffoctreerast"
     
     info "Installing spconv..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --spconv"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --spconv"
     
     info "Installing mip-splatting..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --mipgaussian"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --mipgaussian"
     
     info "Installing kaolin (compatible version for PyTorch 2.5.1)..."
     # Install kaolin using pip with compatible PyTorch version
-    run_in_trellis_env "$CUDA_ENV_VARS pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install kaolin==0.17.0 -f https://nvidia-kaolin.s3.us-east-2.amazonaws.com/torch-2.5.1_cu124.html"
     # Also try the original setup script in case there are additional dependencies
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --kaolin" || warn "Setup script kaolin step failed, but compatible version already installed"
     
     info "Installing nvdiffrast..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --nvdiffrast"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --nvdiffrast"
     
     info "Installing demo dependencies..."
-    run_in_trellis_env "cd '$HOME/TRELLIS' && $CUDA_ENV_VARS source setup.sh --demo"
+    run_in_trellis_env "cd '$HOME/TRELLIS' && $cuda_env_vars source setup.sh --demo"
     
     # Install additional Python packages that might be needed (in conda environment)
     info "Installing additional Python packages..."
-    run_in_trellis_env "pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord"
+    run_in_trellis_env "$HOME/miniconda3/envs/trellis/bin/pip install gradio transformers diffusers accelerate safetensors huggingface-hub trimesh pyopengl moderngl imageio-ffmpeg av decord"
     
     # Install cuDNN via conda (since it's not available as system package on Debian 12)
     info "Installing cuDNN via conda..."
