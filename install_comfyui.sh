@@ -274,7 +274,7 @@ create_venv() {
     
     if [ -d "$VENV_DIR" ]; then
         warn "Virtual environment already exists at $VENV_DIR"
-        if ask_yes_no "Do you want to remove it and create a new one?" "n"; then
+        if ask_yes_no "Do you want to remove it and create a new one?" "y"; then
             rm -rf "$VENV_DIR"
         else
             info "Using existing virtual environment"
@@ -321,7 +321,7 @@ install_comfyui() {
     
     if [ -d "$COMFY_DIR" ]; then
         warn "ComfyUI directory already exists at $COMFY_DIR"
-        if ask_yes_no "Do you want to remove it and install fresh?" "n"; then
+        if ask_yes_no "Do you want to remove it and install fresh?" "y"; then
             rm -rf "$COMFY_DIR"
         else
             info "Using existing ComfyUI installation"
@@ -411,7 +411,7 @@ download_essential_models() {
     fi
     
     # Download SDXL Base (optional)
-    if ask_yes_no "Do you want to download SDXL Base model? (6.6GB)" "n"; then
+    if ask_yes_no "Do you want to download SDXL Base model? (6.6GB)" "y"; then
         info "Downloading SDXL Base..."
         cd "$HOME/comfy"
         if command -v comfy >/dev/null 2>&1; then
@@ -529,7 +529,7 @@ EOF
 create_systemd_service() {
     log "Creating systemd service for ComfyUI..."
     
-    if ! ask_yes_no "Do you want to create a systemd service to run ComfyUI automatically?" "n"; then
+    if ! ask_yes_no "Do you want to create a systemd service to run ComfyUI automatically?" "y"; then
         return 0
     fi
     
@@ -645,7 +645,7 @@ main() {
     info "Virtual environment: $HOME/comfy-env"
     echo
     
-    if ! ask_yes_no "Do you want to continue with the installation?" "n"; then
+    if ! ask_yes_no "Do you want to continue with the installation?" "y"; then
         info "Installation cancelled."
         exit 0
     fi
