@@ -517,7 +517,7 @@ run_in_trellis_env() {
         export PYTHONPATH='$HOME/TRELLIS:\$PYTHONPATH'
         export SPCONV_ALGO='native'
         export CUDA_LAUNCH_BLOCKING=1
-        export PATH='$HOME/miniconda3/envs/trellis/bin:\$PATH'
+        export PATH='$HOME/miniconda3/envs/trellis/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\$PATH'
         $cmd
     "
 }
@@ -769,12 +769,31 @@ install_trellis_deps() {
     
     # Verify CUDA environment is properly set
     log "Verifying CUDA environment in conda environment..."
-    run_in_trellis_env "echo 'CUDA_HOME:' \$CUDA_HOME && echo 'nvcc version:' && nvcc --version" || warn "nvcc not found in conda environment, but CUDA_HOME is set"
+    run_in_trellis_env "echo 'CUDA_HOME:' \$CUDA_HOME && echo 'nvcc version:' && nvcc --version 2>/dev/null || echo 'nvcc not found'" || warn "nvcc not found in conda environment, but CUDA_HOME is set"
     
     # Additional CUDA verification
     log "Additional CUDA verification..."
     run_in_trellis_env "echo 'Checking CUDA installation...' && ls -la \$CUDA_HOME/bin/nvcc 2>/dev/null || echo 'nvcc not found at expected location'"
-    run_in_trellis_env "echo 'Checking CUDA libraries...' && ls -la \$CUDA_HOME/lib64/libcuda* 2>/dev/null | head -5 || echo 'CUDA libraries not found'"
+    run_in_trellis_env "echo 'Checking CUDA libraries...' && ls -la \$CUDA_HOME/lib64/libcuda* 2>/dev/null | head -5 2>/dev/null || echo 'CUDA libraries not found'"
+    
+    # Check if CUDA toolkit is actually installed on the system
+    log "Checking system CUDA toolkit installation..."
+    if ! command -v nvcc >/dev/null 2>&1; then
+        warn "CUDA toolkit (nvcc) not found on system level"
+        info "Checking for CUDA packages..."
+        if dpkg -l | grep -q "cuda-toolkit"; then
+            info "CUDA toolkit packages are installed:"
+            dpkg -l | grep "cuda-toolkit" | head -3
+            warn "CUDA toolkit is installed but nvcc is not in system PATH"
+            info "This might be a PATH issue. The installation will continue but some CUDA compilation may fail."
+        else
+            warn "CUDA toolkit packages are not installed"
+            info "You may need to install CUDA toolkit: sudo apt install cuda-toolkit-12-4"
+            info "The installation will continue but CUDA compilation will likely fail."
+        fi
+    else
+        info "CUDA toolkit found on system level: $(which nvcc)"
+    fi
     
     # Make setup script executable
     run_in_trellis_env "cd '$HOME/TRELLIS' && chmod +x setup.sh"
