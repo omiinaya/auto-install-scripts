@@ -1373,7 +1373,6 @@ install_cuda_dev_deps() {
         vulkan-tools \
         vulkan-validationlayers \
         libvulkan1 \
-        libvulkan1:i386 \
         libglvnd0 \
         libgl1 \
         libglx0 \
