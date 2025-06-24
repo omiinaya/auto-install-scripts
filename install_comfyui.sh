@@ -300,19 +300,32 @@ install_comfy_cli() {
     # Ensure we're in the virtual environment
     source "$HOME/comfy-env/bin/activate"
     
-    # Check if comfy-cli is installed
-    pip list | grep comfy
+    # Check if comfy-cli is already installed
+    if pip list | grep -q comfy; then
+        info "comfy-cli appears to be already installed"
+    else
+        info "comfy-cli not found, installing..."
+    fi
 
-    # If not installed, install it
-    pip install comfy-cli
+    # Install comfy-cli
+    if pip install comfy-cli; then
+        info "comfy-cli installation completed"
+    else
+        warn "comfy-cli installation failed, but continuing..."
+        return 1
+    fi
 
-    # Test the command
-    comfy --version
+    # Test the command (don't exit on failure)
+    if comfy --version; then
+        info "comfy command is working"
+    else
+        warn "comfy --version failed, but continuing installation..."
+    fi
     
     # Enable command completion (optional)
     comfy --install-completion || warn "Could not install command completion"
     
-    log "comfy-cli installed successfully"
+    log "comfy-cli installation step completed"
 }
 
 # Install ComfyUI
