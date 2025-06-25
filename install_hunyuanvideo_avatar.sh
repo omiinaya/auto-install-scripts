@@ -3,7 +3,7 @@ set -e
 
 # Ensure git is installed
 sudo apt-get update
-sudo apt-get install -y git
+sudo apt-get install -y git sudo
 
 # 1. Clone HunyuanVideo-Avatar repository
 if [ ! -d "HunyuanVideo-Avatar" ]; then
