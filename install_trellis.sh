@@ -98,24 +98,24 @@ install_cuda() {
 install_miniconda() {
     if command -v conda >/dev/null 2>&1 || [ -d "$HOME/miniconda" ]; then
         info "Conda is already installed."
-        return 0
+    else
+        log "Installing Miniconda..."
+        wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
+        bash /tmp/miniconda.sh -b -p $HOME/miniconda
+        # Add Miniconda to PATH and initialize conda in both ~/.bashrc and ~/.profile
+        for f in "$HOME/.bashrc" "$HOME/.profile"; do
+            echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> "$f"
+            echo 'if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then' >> "$f"
+            echo '    . "$HOME/miniconda/etc/profile.d/conda.sh"' >> "$f"
+            echo 'fi' >> "$f"
+        done
+        log "Miniconda installed and initialized. Please restart your shell or run: source ~/.bashrc"
     fi
-    log "Installing Miniconda..."
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
-    bash /tmp/miniconda.sh -b -p $HOME/miniconda
-    # Add Miniconda to PATH and initialize conda in both ~/.bashrc and ~/.profile
-    for f in "$HOME/.bashrc" "$HOME/.profile"; do
-        echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> "$f"
-        echo 'if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then' >> "$f"
-        echo '    . "$HOME/miniconda/etc/profile.d/conda.sh"' >> "$f"
-        echo 'fi' >> "$f"
-    done
-    # Make conda available in the current session
+    # Always make conda available in the current session
     export PATH="$HOME/miniconda/bin:$PATH"
     if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
         . "$HOME/miniconda/etc/profile.d/conda.sh"
     fi
-    log "Miniconda installed and initialized. Please restart your shell or run: source ~/.bashrc"
     # Install system Python using the module
     bash "$HOME/install-scripts/modules/install_python.sh" install
 }
