@@ -70,7 +70,7 @@ check_root() {
 # Update system packages
 update_system() {
     log "Updating system packages..."
-    sudo apt update && sudo apt upgrade -y
+    apt update && apt upgrade -y
 }
 
 # Install basic dependencies
@@ -84,7 +84,7 @@ install_basic_deps() {
         apt install -y sudo
     fi
     
-    sudo apt install -y \
+    apt install -y \
         curl \
         wget \
         git \
