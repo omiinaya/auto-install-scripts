@@ -94,35 +94,33 @@ install_basic_deps() {
         tmux
 }
 
-# Install Python and related tools
+# Install Python using standalone module
 install_python() {
-    log "Installing Python and related tools..."
+    log "Installing Python using standalone module..."
     
-    # Install Python 3.11 (Debian 12 default) and pip
-    sudo apt install -y \
-        python3 \
-        python3-pip \
-        python3-venv \
-        python3-full \
-        python3-dev \
-        python3-setuptools \
-        python3-wheel \
-        pipx
+    # Download and run the standalone Python installer
+    info "Downloading Python installer from GitHub..."
     
-    # Check Python version
-    PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
-    info "Python version: $PYTHON_VERSION"
+    # You can set PYTHON_INSTALLER_URL environment variable to use a custom URL
+    PYTHON_INSTALLER_URL="${PYTHON_INSTALLER_URL:-https://raw.githubusercontent.com/omiinaya/install-scripts/refs/heads/main/modules/install_python.sh}"
     
-    # Ensure we have Python 3.9+
-    if python3 -c "import sys; exit(0 if sys.version_info >= (3, 9) else 1)"; then
-        log "Python version is sufficient (3.9+)"
+    # Create temporary directory for the installer
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+    
+    # Download and execute the installer script
+    if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
+        chmod +x install_python.sh
+        info "Running Python installer (default version for ComfyUI)..."
+        ./install_python.sh default
+        log "Python installation completed"
     else
-        error "Python version is too old. ComfyUI requires Python 3.9 or higher."
+        error "Failed to download Python installer from GitHub. Please check your internet connection or install Python manually."
     fi
     
-    # Skip global pip upgrade due to externally-managed-environment
-    # We'll upgrade pip inside the virtual environment instead
-    info "Skipping global pip upgrade (will upgrade in virtual environment)"
+    # Clean up
+    cd - > /dev/null
+    rm -rf "$TEMP_DIR"
 }
 
 # Install NVIDIA drivers using standalone module

@@ -107,37 +107,33 @@ install_basic_deps() {
         libgl1-mesa-glx
 }
 
-# Install Python and related tools
+# Install Python using standalone module
 install_python() {
-    log "Installing Python and related tools..."
+    log "Installing Python using standalone module..."
     
-    # Install Python 3.10 specifically (FramePack recommends Python 3.10)
-    sudo apt install -y \
-        python3.10 \
-        python3.10-pip \
-        python3.10-venv \
-        python3.10-dev \
-        python3-setuptools \
-        python3-wheel \
-        pipx
+    # Download and run the standalone Python installer
+    info "Downloading Python installer from GitHub..."
     
-    # Create symlinks if needed
-    if ! command -v python3.10 >/dev/null 2>&1; then
-        error "Python 3.10 is not available. FramePack requires Python 3.10."
-    fi
+    # You can set PYTHON_INSTALLER_URL environment variable to use a custom URL
+    PYTHON_INSTALLER_URL="${PYTHON_INSTALLER_URL:-https://raw.githubusercontent.com/omiinaya/install-scripts/refs/heads/main/modules/install_python.sh}"
     
-    # Check Python version
-    PYTHON_VERSION=$(python3.10 --version | cut -d' ' -f2)
-    info "Python version: $PYTHON_VERSION"
+    # Create temporary directory for the installer
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
     
-    # Ensure we have Python 3.10
-    if python3.10 -c "import sys; exit(0 if sys.version_info >= (3, 10) and sys.version_info < (3, 11) else 1)"; then
-        log "Python 3.10 is available"
+    # Download and execute the installer script
+    if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
+        chmod +x install_python.sh
+        info "Running Python installer (Python 3.10 for FramePack)..."
+        ./install_python.sh 3.10
+        log "Python 3.10 installation completed"
     else
-        error "FramePack requires Python 3.10 specifically."
+        error "Failed to download Python installer from GitHub. Please check your internet connection or install Python manually."
     fi
     
-    info "Python 3.10 installation completed"
+    # Clean up
+    cd - > /dev/null
+    rm -rf "$TEMP_DIR"
 }
 
 # Install NVIDIA drivers using standalone module
