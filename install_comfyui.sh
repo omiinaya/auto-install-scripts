@@ -108,11 +108,17 @@ install_python() {
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
     
-    # Download and execute the installer script
+    # Download and source the installer script
     if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
         chmod +x install_python.sh
         info "Running Python installer (default version for ComfyUI)..."
-        ./install_python.sh default
+        
+        # Source the script to use its functions
+        source ./install_python.sh
+        
+        # Call the function directly
+        install_python
+        
         log "Python installation completed"
     else
         error "Failed to download Python installer from GitHub. Please check your internet connection or install Python manually."

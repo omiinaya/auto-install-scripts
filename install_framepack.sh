@@ -121,12 +121,19 @@ install_python() {
     TEMP_DIR=$(mktemp -d)
     cd "$TEMP_DIR"
     
-    # Download and execute the installer script
+    # Download and source the installer script
     if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
         chmod +x install_python.sh
-        info "Running Python installer (Python 3.10 for FramePack)..."
-        ./install_python.sh 3.10
-        log "Python 3.10 installation completed"
+        info "Running Python installer (default version for FramePack compatibility)..."
+        info "Note: FramePack recommends Python 3.10, but Python 3.11 (Debian 12 default) is compatible"
+        
+        # Source the script to use its functions
+        source ./install_python.sh
+        
+        # Call the function directly
+        install_python
+        
+        log "Python installation completed"
     else
         error "Failed to download Python installer from GitHub. Please check your internet connection or install Python manually."
     fi
@@ -211,7 +218,7 @@ create_venv() {
         fi
     fi
     
-    python3.10 -m venv "$VENV_DIR"
+    python3 -m venv "$VENV_DIR"
     
     # Activate virtual environment
     source "$VENV_DIR/bin/activate"
@@ -472,10 +479,10 @@ test_installation() {
     
     # Test Python imports
     info "Testing Python imports..."
-    python3.10 -c "import torch; print(f'PyTorch version: {torch.__version__}')"
-    python3.10 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+    python3 -c "import torch; print(f'PyTorch version: {torch.__version__}')"
+    python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
     
-    if python3.10 -c "import torch; exit(0 if torch.cuda.is_available() else 1)"; then
+    if python3 -c "import torch; exit(0 if torch.cuda.is_available() else 1)"; then
         log "CUDA is available and working!"
     else
         warn "CUDA is not available. GPU acceleration may not work."
@@ -484,9 +491,9 @@ test_installation() {
     # Test FramePack dependencies
     info "Testing FramePack dependencies..."
     cd "$HOME/FramePack"
-    python3.10 -c "import diffusers; print(f'Diffusers version: {diffusers.__version__}')"
-    python3.10 -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
-    python3.10 -c "import gradio; print(f'Gradio version: {gradio.__version__}')"
+    python3 -c "import diffusers; print(f'Diffusers version: {diffusers.__version__}')"
+    python3 -c "import transformers; print(f'Transformers version: {transformers.__version__}')"
+    python3 -c "import gradio; print(f'Gradio version: {gradio.__version__}')"
     
     log "Installation test completed successfully!"
 }
@@ -555,6 +562,7 @@ main() {
     echo
     info "FramePack is a next-frame prediction model for video generation"
     info "It can generate up to 120 seconds of video with just 6GB VRAM"
+    info "Note: Using Python 3.11 (Debian 12 default) - compatible with FramePack"
     echo
     
     if ! ask_yes_no "Do you want to continue with the installation?" "y"; then
