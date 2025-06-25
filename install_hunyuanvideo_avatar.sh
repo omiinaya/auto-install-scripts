@@ -26,24 +26,38 @@ cd ../modules
 bash install_cuda_nvcc.sh
 cd ../HunyuanVideo-Avatar
 
-# 5. Create and activate conda environment
+# 5. Install Miniconda if not present
+if ! command -v conda >/dev/null 2>&1; then
+    echo "Installing Miniconda..."
+    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+    bash miniconda.sh -b -p $HOME/miniconda3
+    rm miniconda.sh
+    export PATH="$HOME/miniconda3/bin:$PATH"
+    eval "$($HOME/miniconda3/bin/conda shell.bash hook)"
+    conda init bash
+    source ~/.bashrc
+else
+    echo "Conda already installed"
+fi
+
+# 6. Create and activate conda environment
 CONDA_ENV=HunyuanVideo-Avatar
 conda create -y -n $CONDA_ENV python=3.10.9
 source $(conda info --base)/etc/profile.d/conda.sh
 conda activate $CONDA_ENV
 
-# 6. Install PyTorch and dependencies (CUDA 11.8 by default)
+# 7. Install PyTorch and dependencies (CUDA 11.8 by default)
 conda install -y pytorch==2.4.0 torchvision==0.19.0 torchaudio==2.4.0 pytorch-cuda=11.8 -c pytorch -c nvidia
 
-# 7. Install pip requirements
+# 8. Install pip requirements
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-# 8. Install flash-attention v2 and ninja
+# 9. Install flash-attention v2 and ninja
 python -m pip install ninja
 python -m pip install git+https://github.com/Dao-AILab/flash-attention.git@v2.6.3
 
-# 9. Print instructions for model weights and running the app
+# 10. Print instructions for model weights and running the app
 echo "\n=================================================="
 echo "Installation complete!"
 echo "\nNext steps:"
