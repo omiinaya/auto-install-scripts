@@ -116,8 +116,19 @@ install_miniconda() {
     if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
         . "$HOME/miniconda/etc/profile.d/conda.sh"
     fi
-    # Install system Python using the module
-    bash "$HOME/install-scripts/modules/install_python.sh" install
+    # Install system Python using the module (download from URL)
+    PYTHON_INSTALLER_URL="${PYTHON_INSTALLER_URL:-https://raw.githubusercontent.com/omiinaya/install-scripts/refs/heads/main/modules/install_python.sh}"
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+    if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
+        chmod +x install_python.sh
+        ./install_python.sh install
+        log "System Python installation completed"
+    else
+        error "Failed to download Python installer module."
+    fi
+    cd - > /dev/null
+    rm -rf "$TEMP_DIR"
 }
 
 # Clone TRELLIS repo with submodules
