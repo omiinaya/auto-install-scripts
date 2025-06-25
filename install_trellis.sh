@@ -96,7 +96,7 @@ install_cuda() {
 
 # Install Miniconda if not present
 install_miniconda() {
-    if command -v conda >/dev/null 2>&1; then
+    if command -v conda >/dev/null 2>&1 || [ -d "$HOME/miniconda" ]; then
         info "Conda is already installed."
         return 0
     fi
