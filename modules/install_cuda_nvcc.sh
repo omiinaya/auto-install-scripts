@@ -93,10 +93,7 @@ install_cuda_toolkit() {
     if command -v nvcc >/dev/null 2>&1; then
         info "nvcc already available at: $(which nvcc)"
         nvcc --version | head -1
-        if ! ask_yes_no "Do you want to reinstall CUDA toolkit?" "y"; then
-            log "Skipping CUDA toolkit installation"
-            return 0
-        fi
+        info "Proceeding with CUDA toolkit installation/update..."
     fi
     
     info "Installing CUDA development packages..."
@@ -327,17 +324,12 @@ main() {
     log "CUDA Toolkit and nvcc Installer for Debian 12"
     echo "=================================="
     echo
-    info "This script will install CUDA development tools including:"
+    info "Installing CUDA development tools including:"
     echo "  - CUDA toolkit"
     echo "  - nvcc compiler"
     echo "  - CUDA libraries and headers"
     echo "  - Global environment configuration"
     echo
-    
-    if ! ask_yes_no "Do you want to continue with the CUDA installation?" "y"; then
-        info "Installation cancelled."
-        exit 0
-    fi
     
     update_system
     setup_cuda_repository
