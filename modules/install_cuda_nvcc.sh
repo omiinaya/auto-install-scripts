@@ -101,28 +101,28 @@ install_cuda_toolkit() {
     # Install comprehensive CUDA development packages
     # Try multiple package combinations for maximum compatibility
     
-    # Primary CUDA packages
+    # Primary CUDA packages (12.4 - officially supported by HunyuanVideo-Avatar)
     sudo apt install -y \
-        cuda-toolkit-12-6 \
-        cuda-compiler-12-6 \
-        cuda-nvcc-12-6 \
+        cuda-toolkit-12-4 \
+        cuda-compiler-12-4 \
+        cuda-nvcc-12-4 \
         cuda-toolkit-config-common \
-        cuda-runtime-12-6 \
+        cuda-runtime-12-4 \
         cuda-drivers || warn "Some primary CUDA packages could not be installed"
     
     # Additional development packages
     sudo apt install -y \
-        cuda-libraries-dev-12-6 \
-        cuda-command-line-tools-12-6 \
-        cuda-minimal-build-12-6 || warn "Some additional CUDA packages could not be installed"
+        cuda-libraries-dev-12-4 \
+        cuda-command-line-tools-12-4 \
+        cuda-minimal-build-12-4 || warn "Some additional CUDA packages could not be installed"
     
     # If primary packages failed, try alternative versions
     if ! command -v nvcc >/dev/null 2>&1; then
-        info "Primary packages failed, trying CUDA 12.4..."
+        info "Primary packages failed, trying CUDA 12.6..."
         sudo apt install -y \
-            cuda-toolkit-12-4 \
-            cuda-compiler-12-4 \
-            cuda-nvcc-12-4 || warn "CUDA 12.4 packages failed"
+            cuda-toolkit-12-6 \
+            cuda-compiler-12-6 \
+            cuda-nvcc-12-6 || warn "CUDA 12.6 packages failed"
     fi
     
     # If still no nvcc, try generic packages
