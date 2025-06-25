@@ -57,15 +57,7 @@ ask_yes_no() {
     done
 }
 
-# Check if running as root
-check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        if ! ask_yes_no "Do you want to continue anyway?" "n"; then
-            exit 1
-        fi
-    fi
-}
+
 
 # Update system packages
 update_system() {
@@ -572,7 +564,6 @@ main() {
         exit 0
     fi
     
-    check_root
     update_system
     install_basic_deps
     install_python

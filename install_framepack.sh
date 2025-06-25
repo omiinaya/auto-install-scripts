@@ -57,15 +57,7 @@ ask_yes_no() {
     done
 }
 
-# Check if running as root
-check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        if ! ask_yes_no "Do you want to continue anyway?" "n"; then
-            exit 1
-        fi
-    fi
-}
+
 
 # Update system packages
 update_system() {
@@ -355,7 +347,7 @@ echo
 
 # Launch FramePack with network access by default
 # Pass any additional arguments to the script
-python demo_gradio.py --listen 0.0.0.0 "$@"
+python demo_gradio.py --server 0.0.0.0 "$@"
 EOF
 
     # Make the launcher script executable
@@ -416,7 +408,7 @@ echo
 
 # Launch FramePack F1 with network access by default
 # Pass any additional arguments to the script
-python demo_gradio_f1.py --listen 0.0.0.0 "$@"
+python demo_gradio_f1.py --server 0.0.0.0 "$@"
 EOF
 
     # Make the F1 launcher script executable
@@ -511,7 +503,7 @@ print_instructions() {
     echo "  3. Or manually:"
     echo "     source $HOME/framepack-env/bin/activate"
     echo "     cd $HOME/FramePack"
-    echo "     python demo_gradio.py --listen 0.0.0.0"
+         echo "     python demo_gradio.py --server 0.0.0.0"
     echo
     info "FramePack will be accessible at:"
     echo "  Local access: http://localhost:7860"
@@ -570,7 +562,6 @@ main() {
         exit 0
     fi
     
-    check_root
     update_system
     install_basic_deps
     install_python
