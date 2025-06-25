@@ -30,23 +30,13 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# Check for and install sudo first if not present
-ensure_sudo() {
-    if ! command -v sudo >/dev/null 2>&1; then
-        log "Installing sudo..."
-        apt update
-        apt install -y sudo
-    fi
-}
-
 # Install Python and related tools (EXACT COPY from install_comfyui.sh)
 install_python() {
     log "Installing Python and related tools..."
     
-    ensure_sudo
-    
     # Install Python 3.11 (Debian 12 default) and pip
-    sudo apt install -y \
+    apt install -y \
+        sudo \
         python3 \
         python3-pip \
         python3-venv \

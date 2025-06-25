@@ -103,9 +103,21 @@ install_miniconda() {
     log "Installing Miniconda..."
     wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh
     bash /tmp/miniconda.sh -b -p $HOME/miniconda
+    # Add Miniconda to PATH and initialize conda in both ~/.bashrc and ~/.profile
+    for f in "$HOME/.bashrc" "$HOME/.profile"; do
+        echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> "$f"
+        echo 'if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then' >> "$f"
+        echo '    . "$HOME/miniconda/etc/profile.d/conda.sh"' >> "$f"
+        echo 'fi' >> "$f"
+    done
+    # Make conda available in the current session
     export PATH="$HOME/miniconda/bin:$PATH"
-    echo 'export PATH="$HOME/miniconda/bin:$PATH"' >> $HOME/.bashrc
-    log "Miniconda installed. Please restart your shell or run: source ~/.bashrc"
+    if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+        . "$HOME/miniconda/etc/profile.d/conda.sh"
+    fi
+    log "Miniconda installed and initialized. Please restart your shell or run: source ~/.bashrc"
+    # Install system Python using the module
+    bash "$HOME/install-scripts/modules/install_python.sh" install
 }
 
 # Clone TRELLIS repo with submodules
@@ -123,6 +135,11 @@ clone_trellis() {
 run_trellis_setup() {
     log "Running TRELLIS setup.sh with recommended options..."
     cd $HOME/TRELLIS
+    # Create conda env with Python 3.10 if not already present
+    if ! conda env list | grep -q "trellis"; then
+        conda create -y -n trellis python=3.10
+    fi
+    conda activate trellis
     # Use --new-env to create a new conda env, and install all recommended dependencies
     bash -c ". ./setup.sh --new-env --basic --xformers --flash-attn --diffoctreerast --spconv --mipgaussian --kaolin --nvdiffrast"
     log "TRELLIS setup complete. Activate the environment with: conda activate trellis"
