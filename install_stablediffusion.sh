@@ -95,6 +95,10 @@ install_basic_deps() {
         libxext6 \
         libxrender-dev \
         ffmpeg
+
+    # Install google-perftools for TCMalloc support
+    log "Installing google-perftools (TCMalloc) for improved memory usage..."
+    sudo apt-get install -y google-perftools
 }
 
 # Install Python using standalone module
@@ -348,7 +352,7 @@ User=$CURRENT_USER
 Group=$CURRENT_USER
 WorkingDirectory=$USER_HOME/stable-diffusion-webui
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$USER_HOME/launch_sd.sh
+ExecStart=/usr/bin/bash $USER_HOME/stable-diffusion-webui/webui.sh -f --xformers --listen --enable-insecure-extension-access --api
 Restart=always
 RestartSec=10
 StandardOutput=journal
