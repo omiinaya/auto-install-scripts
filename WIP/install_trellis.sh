@@ -146,14 +146,124 @@ clone_trellis() {
 run_trellis_setup() {
     log "Running TRELLIS setup.sh with recommended options..."
     cd $HOME/TRELLIS
+    
+    # Ensure conda is properly initialized
+    if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+        source "$HOME/miniconda/etc/profile.d/conda.sh"
+    fi
+    
+    # Initialize conda for the current shell and fix any syntax errors
+    if command -v conda >/dev/null 2>&1; then
+        conda init bash
+        # Fix bashrc syntax errors if they exist
+        if ! bash -n ~/.bashrc 2>/dev/null; then
+            warn "Syntax error detected in ~/.bashrc, fixing now..."
+            # Create a backup
+            cp ~/.bashrc ~/.bashrc.backup.$(date +%s)
+            # Fix common syntax issues caused by conda init conflicts
+            # Remove duplicate or malformed conda initialization blocks
+            awk '
+            /# >>> conda initialize >>>/ { in_conda=1; print; next }
+            /# <<< conda initialize <<</ { in_conda=0; print; next }
+            in_conda && seen_conda { next }
+            in_conda { seen_conda=1 }
+            !in_conda { print }
+            ' ~/.bashrc > ~/.bashrc.tmp && mv ~/.bashrc.tmp ~/.bashrc
+            
+            # Test the fix
+            if bash -n ~/.bashrc 2>/dev/null; then
+                log "Fixed ~/.bashrc syntax errors"
+            else
+                # If still broken, restore from backup and create minimal working version
+                warn "Complex syntax errors detected, creating clean ~/.bashrc"
+                cp ~/.bashrc.backup.$(date +%s | tail -1) ~/.bashrc.broken
+                cat > ~/.bashrc << 'EOF'
+# .bashrc
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+    . /etc/bashrc
+fi
+
+# User specific environment
+if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]
+then
+    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+fi
+export PATH
+EOF
+                # Re-run conda init on the clean bashrc
+                conda init bash
+                log "Created clean ~/.bashrc and re-initialized conda"
+            fi
+        fi
+        # Now source the fixed bashrc
+        source ~/.bashrc || warn "Failed to source ~/.bashrc after fixing"
+    fi
+    
     # Create conda env with Python 3.10 if not already present
     if ! conda env list | grep -q "trellis"; then
+        log "Creating trellis conda environment..."
         conda create -y -n trellis python=3.10
     fi
+    
+    # Use source instead of bash -c to run setup in the current shell context
+    log "Activating trellis environment and running setup..."
+    source "$HOME/miniconda/etc/profile.d/conda.sh"
     conda activate trellis
-    # Use --new-env to create a new conda env, and install all recommended dependencies
-    bash -c ". ./setup.sh --new-env --basic --xformers --flash-attn --diffoctreerast --spconv --mipgaussian --kaolin --nvdiffrast"
+    
+    # Run setup with error handling - use bash instead of source to avoid return statement issues
+    if [ -f "./setup.sh" ]; then
+        log "Running TRELLIS setup script..."
+        bash ./setup.sh --new-env --basic --xformers --flash-attn --diffoctreerast --spconv --mipgaussian --kaolin --nvdiffrast || {
+            warn "Setup script encountered some issues, but continuing..."
+        }
+    else
+        error "setup.sh not found in TRELLIS directory"
+    fi
+
+    # Always activate trellis environment before pip/python commands
+    if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+        source "$HOME/miniconda/etc/profile.d/conda.sh"
+    fi
+    conda activate trellis
+
+    # Check if torch is importable
+    if ! python -c "import torch" 2>/dev/null; then
+        log "PyTorch not found, installing torch, torchvision, torchaudio..."
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 || warn "Manual PyTorch installation failed"
+        # After installing torch, re-run the optional dependency setup
+        log "Re-running setup.sh for optional dependencies after torch install..."
+        bash ./setup.sh --xformers --flash-attn --kaolin --nvdiffrast --diffoctreerast --mipgaussian --vox2seq --spconv || warn "Optional dependency setup failed"
+    fi
+    # Print torch version for verification
+    python -c "import torch; print('PyTorch version:', torch.__version__)" || warn "PyTorch is still not importable after install!"
+    
     log "TRELLIS setup complete. Activate the environment with: conda activate trellis"
+}
+
+# Fix post-installation issues
+fix_post_install() {
+    log "Fixing common post-installation issues..."
+    
+    # Create a separate conda activation script for convenience
+    cat > "$HOME/.conda_trellis_init" << 'EOF'
+#!/bin/bash
+# TRELLIS conda initialization script
+if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+    source "$HOME/miniconda/etc/profile.d/conda.sh"
+    # Uncomment the next line to auto-activate trellis environment
+    # conda activate trellis
+fi
+EOF
+    
+    # Add source command to bashrc if not already present
+    if [ -f "$HOME/.bashrc" ] && ! grep -q ".conda_trellis_init" "$HOME/.bashrc"; then
+        echo "" >> "$HOME/.bashrc"
+        echo "# Source TRELLIS conda initialization" >> "$HOME/.bashrc"
+        echo "[ -f ~/.conda_trellis_init ] && source ~/.conda_trellis_init" >> "$HOME/.bashrc"
+        log "Added TRELLIS conda initialization to ~/.bashrc"
+    fi
 }
 
 # Print final instructions
@@ -163,14 +273,27 @@ print_instructions() {
     log "TRELLIS Installation Complete!"
     echo "=================================="
     echo
-    info "To activate the TRELLIS environment:"
+    info "IMPORTANT: Please restart your shell or run:"
+    echo "  source ~/.bashrc"
+    echo
+    info "Then activate the TRELLIS environment with:"
     echo "  conda activate trellis"
+    echo
+    info "If you encounter 'conda: command not found', run:"
+    echo "  source ~/miniconda/etc/profile.d/conda.sh"
+    echo "  conda init bash"
+    echo "  source ~/.bashrc"
+    echo
+    info "To test the installation:"
+    echo "  cd ~/TRELLIS"
+    echo "  conda activate trellis"
+    echo "  python -c \"import torch; print('PyTorch version:', torch.__version__)\""
     echo
     info "To run TRELLIS demos or training, see the official repo:"
     echo "  https://github.com/microsoft/TRELLIS"
     echo
-    info "For more setup options, run:"
-    echo "  cd ~/TRELLIS && ./setup.sh --help"
+    info "For additional setup options, run:"
+    echo "  cd ~/TRELLIS && source ./setup.sh --help"
     echo
 }
 
@@ -189,7 +312,8 @@ main() {
     install_miniconda
     clone_trellis
     run_trellis_setup
+    fix_post_install
     print_instructions
 }
 
-main "$@" 
+main "$@"
