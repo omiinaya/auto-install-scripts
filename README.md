@@ -29,6 +29,15 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ## Software
 
+### AI Automation
+
+**[`^        back to top        ^`](#debian-install-scripts)**
+
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)**  
+  *AI automation and workflow orchestration for Stable Diffusion and related models. Node-based Web UI, comfy-cli, automatic model management, VRAM optimization.*  
+  `Shell` `Automation` `Stable Diffusion` `WebUI` `GPU`  
+  **Install:** `./install_comfyui.sh`
+
 ### 3D Generation
 
 **[`^        back to top        ^`](#debian-install-scripts)**
@@ -55,15 +64,6 @@ Self-hosting is the practice of running applications on your own server(s) inste
   *Generate images with Stable Diffusion: text2img, img2img, inpainting, extensions, API, systemd, root support, TCMalloc.*  
   `Shell` `Stable Diffusion` `WebUI` `API` `GPU`  
   **Install:** `./install_stablediffusion.sh`
-
-### AI Automation
-
-**[`^        back to top        ^`](#debian-install-scripts)**
-
-- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)**  
-  *AI automation and workflow orchestration for Stable Diffusion and related models. Node-based Web UI, comfy-cli, automatic model management, VRAM optimization.*  
-  `Shell` `Automation` `Stable Diffusion` `WebUI` `GPU`  
-  **Install:** `./install_comfyui.sh`
 
 --------------------
 
