@@ -14,10 +14,10 @@ Self-hosting is the practice of running applications on your own server(s) inste
 ## Table of Contents
 
 - [Software](#software)
+  - [AI Automation](#ai-automation)
   - [3D Generation](#3d-asset-generation)
   - [Video Generation](#video-generation)
   - [Image Generation](#image-generation)
-  - [AI Automation](#ai-automation)
 - [Usage](#usage)
 - [Features](#features)
 - [Contributing](#contributing)
@@ -31,7 +31,7 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ### 3D Generation
 
-**[`^        back to top        ^`](#open-source-awesome-ai)**
+**[`^        back to top        ^`](#debian-install-scripts)**
 
 - **[TRELLIS (Microsoft)](https://github.com/microsoft/trellis)**  
   *Generate 3D assets using a GPU-accelerated, container-friendly pipeline. Official conda-based installer.*  
@@ -40,7 +40,7 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ### Video Generation
 
-**[`^        back to top        ^`](#open-source-awesome-ai)**
+**[`^        back to top        ^`](#debian-install-scripts)**
 
 - **[FramePack](https://github.com/lllyasviel/FramePack)**  
   *Generate next-frame prediction videos (standard & F1 models, up to 120s, 6GB+ VRAM).*  
@@ -49,7 +49,7 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ### Image Generation
 
-**[`^        back to top        ^`](#open-source-awesome-ai)**
+**[`^        back to top        ^`](#debian-install-scripts)**
 
 - **[Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)**  
   *Generate images with Stable Diffusion: text2img, img2img, inpainting, extensions, API, systemd, root support, TCMalloc.*  
@@ -58,7 +58,7 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ### AI Automation
 
-**[`^        back to top        ^`](#open-source-awesome-ai)**
+**[`^        back to top        ^`](#debian-install-scripts)**
 
 - **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)**  
   *AI automation and workflow orchestration for Stable Diffusion and related models. Node-based Web UI, comfy-cli, automatic model management, VRAM optimization.*  
