@@ -109,6 +109,13 @@ install_miniconda() {
             echo '    . "$HOME/miniconda/etc/profile.d/conda.sh"' >> "$f"
             echo 'fi' >> "$f"
         done
+        # Immediately initialize conda for bash
+        export PATH="$HOME/miniconda/bin:$PATH"
+        "$HOME/miniconda/bin/conda" init bash
+        # Source the updated bashrc so conda activate works in this script
+        if [ -f "$HOME/.bashrc" ]; then
+            source "$HOME/.bashrc"
+        fi
         log "Miniconda installed and initialized. Please restart your shell or run: source ~/.bashrc"
     fi
     # Always make conda available in the current session
@@ -147,59 +154,19 @@ run_trellis_setup() {
     log "Running TRELLIS setup.sh with recommended options..."
     cd $HOME/TRELLIS
     
-    # Ensure conda is properly initialized
-    if [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
-        source "$HOME/miniconda/etc/profile.d/conda.sh"
-    fi
-    
-    # Initialize conda for the current shell and fix any syntax errors
+    # Ensure conda is initialized for the shell
     if command -v conda >/dev/null 2>&1; then
-        conda init bash
-        # Fix bashrc syntax errors if they exist
-        if ! bash -n ~/.bashrc 2>/dev/null; then
-            warn "Syntax error detected in ~/.bashrc, fixing now..."
-            # Create a backup
-            cp ~/.bashrc ~/.bashrc.backup.$(date +%s)
-            # Fix common syntax issues caused by conda init conflicts
-            # Remove duplicate or malformed conda initialization blocks
-            awk '
-            /# >>> conda initialize >>>/ { in_conda=1; print; next }
-            /# <<< conda initialize <<</ { in_conda=0; print; next }
-            in_conda && seen_conda { next }
-            in_conda { seen_conda=1 }
-            !in_conda { print }
-            ' ~/.bashrc > ~/.bashrc.tmp && mv ~/.bashrc.tmp ~/.bashrc
-            
-            # Test the fix
-            if bash -n ~/.bashrc 2>/dev/null; then
-                log "Fixed ~/.bashrc syntax errors"
-            else
-                # If still broken, restore from backup and create minimal working version
-                warn "Complex syntax errors detected, creating clean ~/.bashrc"
-                cp ~/.bashrc.backup.$(date +%s | tail -1) ~/.bashrc.broken
-                cat > ~/.bashrc << 'EOF'
-# .bashrc
-
-# Source global definitions
-if [ -f /etc/bashrc ]; then
-    . /etc/bashrc
-fi
-
-# User specific environment
-if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]
-then
-    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
-fi
-export PATH
-EOF
-                # Re-run conda init on the clean bashrc
-                conda init bash
-                log "Created clean ~/.bashrc and re-initialized conda"
-            fi
+        conda init bash || warn "Failed to initialize conda for bash"
+        # Source ~/.bashrc if it exists and is valid, otherwise source conda.sh directly
+        if [ -f "$HOME/.bashrc" ] && bash -n "$HOME/.bashrc" 2>/dev/null; then
+            source "$HOME/.bashrc" || warn "Failed to source ~/.bashrc after conda init"
+        elif [ -f "$HOME/miniconda/etc/profile.d/conda.sh" ]; then
+            source "$HOME/miniconda/etc/profile.d/conda.sh" || warn "Failed to source conda.sh after conda init"
         fi
-        # Now source the fixed bashrc
-        source ~/.bashrc || warn "Failed to source ~/.bashrc after fixing"
     fi
+
+    # Now try to activate trellis environment
+    conda activate trellis || warn "conda activate trellis failed. Please restart your shell or source ~/.bashrc manually."
     
     # Create conda env with Python 3.10 if not already present
     if ! conda env list | grep -q "trellis"; then
