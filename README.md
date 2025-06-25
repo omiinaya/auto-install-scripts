@@ -15,7 +15,7 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 - [Software](#software)
   - [AI Automation](#ai-automation)
-  - [3D Generation](#3d-asset-generation)
+  - [3D Generation](#3d-generation)
   - [Video Generation](#video-generation)
   - [Image Generation](#image-generation)
 - [Usage](#usage)
