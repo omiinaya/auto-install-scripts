@@ -57,40 +57,6 @@ ask_yes_no() {
     done
 }
 
-# Check if running as root
-check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    fi
-}
-
-# Check system compatibility
-check_system() {
-    log "Checking system compatibility..."
-    
-    # Check if running on Debian
-    if ! grep -q "Debian" /etc/os-release; then
-        warn "This script is designed for Debian 12. Your system:"
-        cat /etc/os-release | grep PRETTY_NAME
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    fi
-    
-    # Check Debian version
-    DEBIAN_VERSION=$(grep VERSION_ID /etc/os-release | cut -d'"' -f2)
-    if [ "$DEBIAN_VERSION" != "12" ]; then
-        warn "This script is optimized for Debian 12. You are running Debian $DEBIAN_VERSION"
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    fi
-    
-    info "System check passed: Debian $DEBIAN_VERSION"
-}
 
 # Update system packages
 update_system() {
@@ -214,8 +180,6 @@ main() {
         exit 0
     fi
     
-    check_root
-    check_system
     update_system
     install_basic_deps
     install_nvidia_drivers

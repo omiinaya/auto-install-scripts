@@ -57,42 +57,6 @@ ask_yes_no() {
     done
 }
 
-# Check if running as root
-check_root() {
-    if [[ $EUID -eq 0 ]]; then
-        warn "This script should not be run as root. Please run as a regular user with sudo privileges."
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    fi
-}
-
-# Check system compatibility
-check_system() {
-    log "Checking system compatibility..."
-    
-    # Check if running on Debian
-    if ! grep -q "Debian" /etc/os-release; then
-        warn "This script is designed for Debian 12. Your system:"
-        cat /etc/os-release | grep PRETTY_NAME
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    fi
-    
-    # Check if NVIDIA drivers are installed
-    if ! command -v nvidia-smi >/dev/null 2>&1; then
-        warn "NVIDIA drivers do not appear to be installed."
-        warn "CUDA toolkit requires NVIDIA drivers to be installed first."
-        if ! ask_yes_no "Do you want to continue anyway?" "y"; then
-            exit 1
-        fi
-    else
-        info "NVIDIA drivers detected:"
-        nvidia-smi --version 2>/dev/null || true
-    fi
-}
-
 # Update system packages
 update_system() {
     log "Updating system packages..."
@@ -375,8 +339,6 @@ main() {
         exit 0
     fi
     
-    check_root
-    check_system
     update_system
     setup_cuda_repository
     install_cuda_toolkit
