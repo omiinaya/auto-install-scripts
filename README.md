@@ -7,15 +7,17 @@
 
 Self-hosting is the practice of running applications on your own server(s) instead of relying on SaaS providers. This list features modular, automated installation scripts for popular AI/ML tools, optimized for **Debian 12 (Proxmox containers)** with NVIDIA GPU support.
 
-> **Modular, robust, and container-optimized AI/ML installer scripts for your own hardware.**
+> **Modular, robust, and container-optimized installer scripts for your own hardware.**
 
 --------------------
 
 ## Table of Contents
 
 - [Software](#software)
-  - [Generative AI & ML](#generative-ai--ml)
-  - [Modules](#modules)
+  - [3D Generation](#3d-asset-generation)
+  - [Video Generation](#video-generation)
+  - [Image Generation](#image-generation)
+  - [AI Automation](#ai-automation)
 - [Usage](#usage)
 - [Features](#features)
 - [Contributing](#contributing)
@@ -27,45 +29,41 @@ Self-hosting is the practice of running applications on your own server(s) inste
 
 ## Software
 
-### Generative AI & ML
+### 3D Generation
 
-**[`^        back to top        ^`](#awesome-selfhosted-ai)**
-
-- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)**  
-  *Node-based Stable Diffusion Web UI with comfy-cli, automatic model management, and VRAM optimization.*  
-  `Shell` `Stable Diffusion` `WebUI` `GPU`  
-  **Install:** `./install_comfyui.sh`
-
-- **[FramePack](https://github.com/lllyasviel/FramePack)**  
-  *Next-frame prediction for video generation (standard & F1 models, up to 120s, 6GB+ VRAM).*  
-  `Shell` `Video` `ML` `GPU`  
-  **Install:** `./install_framepack.sh`
-
-- **[Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)**  
-  *Popular web interface for Stable Diffusion: text2img, img2img, inpainting, extensions, API, systemd, root support, TCMalloc.*  
-  `Shell` `Stable Diffusion` `WebUI` `API` `GPU`  
-  **Install:** `./install_stablediffusion.sh`
+**[`^        back to top        ^`](#open-source-awesome-ai)**
 
 - **[TRELLIS (Microsoft)](https://github.com/microsoft/trellis)**  
-  *3D generative model setup via official conda-based installer. GPU-accelerated, container-friendly.*  
+  *Generate 3D assets using a GPU-accelerated, container-friendly pipeline. Official conda-based installer.*  
   `Shell` `3D` `ML` `Conda` `GPU`  
   **Install:** `./install_trellis.sh`
 
---------------------
+### Video Generation
 
-### Modules
+**[`^        back to top        ^`](#open-source-awesome-ai)**
 
-**[`^        back to top        ^`](#awesome-selfhosted-ai)**
+- **[FramePack](https://github.com/lllyasviel/FramePack)**  
+  *Generate next-frame prediction videos (standard & F1 models, up to 120s, 6GB+ VRAM).*  
+  `Shell` `Video` `ML` `GPU`  
+  **Install:** `./install_framepack.sh`
 
-- **install_python.sh**  
-  *Installs and configures Python (version specified per app).*  
-  `Shell` `Python`
-- **install_nvidia_drivers.sh**  
-  *Installs NVIDIA GPU drivers for Debian 12.*  
-  `Shell` `NVIDIA` `GPU`
-- **install_cuda_nvcc.sh**  
-  *Installs CUDA toolkit and NVCC compiler.*  
-  `Shell` `CUDA` `GPU`
+### Image Generation
+
+**[`^        back to top        ^`](#open-source-awesome-ai)**
+
+- **[Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)**  
+  *Generate images with Stable Diffusion: text2img, img2img, inpainting, extensions, API, systemd, root support, TCMalloc.*  
+  `Shell` `Stable Diffusion` `WebUI` `API` `GPU`  
+  **Install:** `./install_stablediffusion.sh`
+
+### AI Automation
+
+**[`^        back to top        ^`](#open-source-awesome-ai)**
+
+- **[ComfyUI](https://github.com/comfyanonymous/ComfyUI)**  
+  *AI automation and workflow orchestration for Stable Diffusion and related models. Node-based Web UI, comfy-cli, automatic model management, VRAM optimization.*  
+  `Shell` `Automation` `Stable Diffusion` `WebUI` `GPU`  
+  **Install:** `./install_comfyui.sh`
 
 --------------------
 
@@ -82,32 +80,15 @@ Self-hosting is the practice of running applications on your own server(s) inste
    ```
 3. **Run the desired installer:**
    ```bash
-   # ComfyUI
-   ./install_comfyui.sh
+   # TRELLIS
+   ./install_trellis.sh
    # FramePack
    ./install_framepack.sh
    # Stable Diffusion WebUI
    ./install_stablediffusion.sh
-   # TRELLIS
-   ./install_trellis.sh
+   # ComfyUI
+   ./install_comfyui.sh
    ```
-
-### Stable Diffusion WebUI (AUTOMATIC1111) Service
-- Systemd service (`sd-webui.service`) runs as root with `-f` flag, API and network enabled.
-- Control the service:
-  ```bash
-  sudo systemctl start sd-webui
-  sudo systemctl stop sd-webui
-  sudo systemctl status sd-webui
-  ```
-- Access: [http://your-server-ip:7860](http://your-server-ip:7860)
-- Command: `bash webui.sh -f --xformers --listen --enable-insecure-extension-access --api`
-- TCMalloc (google-perftools) is installed for improved memory usage.
-
-### ComfyUI & FramePack
-- Launcher scripts and systemd services are created by the installers.
-- Access ComfyUI: [http://your-server-ip:8188](http://your-server-ip:8188)
-- Access FramePack: [http://your-server-ip:7860](http://your-server-ip:7860)
 
 --------------------
 
@@ -141,17 +122,8 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Acknowledgments
 
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
+- [TRELLIS](https://github.com/microsoft/trellis)
 - [FramePack](https://github.com/lllyasviel/FramePack)
 - [Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
-- [TRELLIS](https://github.com/microsoft/trellis)
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
 - NVIDIA for CUDA and GPU support
-
---------------------
-
-## External Links
-
-- [Debian 12](https://www.debian.org/)
-- [Proxmox VE](https://www.proxmox.com/)
-- [NVIDIA CUDA](https://developer.nvidia.com/cuda-zone)
-- [Awesome-Selfhosted](https://github.com/awesome-selfhosted/awesome-selfhosted) 
