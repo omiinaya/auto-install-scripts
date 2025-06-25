@@ -1,4 +1,4 @@
-# Open Source Awesome AI
+# Debian Install Scripts
 
 [![Awesome](https://img.shields.io/badge/Awesome-blue.svg)](https://github.com/sindresorhus/awesome)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
