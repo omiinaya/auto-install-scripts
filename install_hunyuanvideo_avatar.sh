@@ -57,13 +57,57 @@ python -m pip install -r requirements.txt
 python -m pip install ninja
 python -m pip install git+https://github.com/Dao-AILab/flash-attention.git@v2.6.3
 
-# 10. Print instructions for model weights and running the app
+# 10. Install huggingface-cli for model downloads
+python -m pip install "huggingface_hub[cli]"
+
+# 11. Download model weights
+echo "Downloading HunyuanVideo-Avatar model weights..."
+cd weights
+huggingface-cli download tencent/HunyuanVideo-Avatar --local-dir ./
+cd ..
+
+# 12. Create optimized launcher script
+cat > launch_hunyuanvideo_avatar.sh << 'EOF'
+#!/bin/bash
+
+# HunyuanVideo-Avatar Optimized Launcher
+# This script sets up memory optimization and launches the application
+
+# Activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate HunyuanVideo-Avatar
+
+# Set memory optimization environment variables
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export CUDA_VISIBLE_DEVICES=0
+
+# Kill any existing Python processes to free GPU memory
+echo "Clearing GPU memory..."
+sudo pkill -f python || true
+sleep 2
+
+# Navigate to project directory
+cd ~/auto-install-scripts/HunyuanVideo-Avatar
+
+echo "Starting HunyuanVideo-Avatar..."
+echo "Access the interface at: http://localhost:8080"
+echo "Press Ctrl+C to stop"
+
+# Launch the Gradio server
+bash ./scripts/run_gradio.sh
+EOF
+
+# Make launcher executable
+chmod +x launch_hunyuanvideo_avatar.sh
+
+# 13. Print completion message
 echo "\n=================================================="
 echo "Installation complete!"
-echo "\nNext steps:"
-echo "1. Download the pretrained model weights as described in the HunyuanVideo-Avatar README."
-echo "2. To run the Gradio server:"
-echo "   cd HunyuanVideo-Avatar"
-echo "   bash ./scripts/run_gradio.sh"
+echo "\nTo run HunyuanVideo-Avatar:"
+echo "   bash ~/auto-install-scripts/HunyuanVideo-Avatar/launch_hunyuanvideo_avatar.sh"
+echo "\nThe launcher will:"
+echo "- Clear GPU memory automatically"
+echo "- Set memory optimization flags"
+echo "- Start the Gradio interface on http://localhost:8080"
 echo "\nFor more usage, see: https://github.com/Tencent-Hunyuan/HunyuanVideo-Avatar"
 echo "==================================================\n" 
