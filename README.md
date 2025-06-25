@@ -25,12 +25,21 @@ A collection of modular installation scripts for AI/ML applications, designed sp
 - Includes both standard and F1 models
 - Optimized for 6GB+ VRAM GPUs
 
+### Stable Diffusion WebUI (AUTOMATIC1111)
+- Popular web interface for Stable Diffusion image generation
+- Supports text-to-image, image-to-image, inpainting, outpainting, model merging, and extensions
+- API access and network access enabled by default
+- Systemd service support for background/automatic startup
+- Root execution supported (with `-f` flag)
+- TCMalloc (google-perftools) installed for improved memory usage
+
 ## Module Structure
 
 ```
 install-scripts/
 ├── install_comfyui.sh      # ComfyUI installation script
 ├── install_framepack.sh    # FramePack installation script
+├── install_stablediffusion.sh # Stable Diffusion WebUI installer
 └── modules/
     ├── install_python.sh       # Python environment setup
     ├── install_nvidia_drivers.sh   # NVIDIA driver installation
@@ -57,7 +66,31 @@ chmod +x *.sh modules/*.sh
 
 # For FramePack
 ./install_framepack.sh
+
+# For Stable Diffusion WebUI (AUTOMATIC1111)
+./install_stablediffusion.sh
 ```
+
+## Stable Diffusion WebUI Usage
+
+- The installer sets up a systemd service (`sd-webui.service`) that runs Stable Diffusion WebUI as root (using the `-f` flag) and enables API and network access by default.
+- The service will start automatically on boot, or you can control it manually:
+
+```bash
+sudo systemctl start sd-webui      # Start the service
+sudo systemctl stop sd-webui       # Stop the service
+sudo systemctl status sd-webui     # Check status
+```
+
+- Access the WebUI from any device on your local network:
+  - http://your-server-ip:7860
+
+- The service command is:
+  ```bash
+  bash webui.sh -f --xformers --listen --enable-insecure-extension-access --api
+  ```
+
+- TCMalloc (from google-perftools) is installed and available for improved memory usage.
 
 ## Environment Variables
 
@@ -102,6 +135,18 @@ Access the UI:
 - Local: http://localhost:7860
 - Network: http://your-server-ip:7860
 
+### Stable Diffusion WebUI
+
+Start/stop the service:
+```bash
+sudo systemctl start sd-webui
+sudo systemctl stop sd-webui
+```
+
+Access the UI:
+- Local: http://localhost:7860
+- Network: http://your-server-ip:7860
+
 ## Features
 
 ### Automated Setup
@@ -112,8 +157,8 @@ Access the UI:
 - CUDA toolkit setup
 - Virtual environment creation
 - Application-specific dependencies
-- Launcher script generation
-- Optional systemd service creation
+- Launcher script generation (ComfyUI, FramePack)
+- Systemd service creation (all apps)
 
 ### Safety Features
 - Error checking and validation
@@ -145,4 +190,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
 - [FramePack](https://github.com/lllyasviel/FramePack)
+- [Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
 - NVIDIA for CUDA and GPU support 
