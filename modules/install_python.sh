@@ -64,19 +64,7 @@ install_python() {
 
 # Main function for standalone usage
 main() {
-    if [ $# -eq 0 ]; then
-        echo "Python Installation Module"
-        echo "Usage: $0"
-        echo
-        echo "This module installs Python and related tools exactly as in install_comfyui.sh"
-        exit 1
-    fi
-    
-    case "$1" in
-        *)
-            install_python
-            ;;
-    esac
+    install_python
 }
 
 # Only run main if script is executed directly (not sourced)
