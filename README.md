@@ -1,194 +1,125 @@
-# AI Installation Scripts
+# 🛠️ AI Self-Hosted Install Scripts
 
-A collection of modular installation scripts for AI/ML applications, designed specifically for Debian 12 (Proxmox Containers). These scripts automate the setup of various AI tools with NVIDIA GPU support.
+A curated collection of modular, automated install scripts for popular self-hosted AI/ML tools on Debian 12 (Proxmox containers). Each script sets up GPU acceleration, dependencies, and systemd services for seamless, production-ready deployment.
 
-## Features
+---
 
-- **Modular Design**: Common dependencies (Python, NVIDIA, CUDA) are separated into reusable modules
-- **Interactive Installation**: User-friendly prompts and colored output for better UX
-- **Comprehensive Setup**: Handles all aspects from system updates to application launch
-- **Container-Optimized**: Specifically designed for Debian 12 Proxmox containers
-- **Systemd Integration**: Optional systemd service creation for automatic startup
-- **Testing & Verification**: Built-in installation testing and environment verification
+## 📚 Table of Contents
+- [Supported Applications](#supported-applications)
+- [Reusable Modules](#reusable-modules)
+- [System Requirements](#system-requirements)
+- [Installation](#installation)
+- [Contributing](#contributing)
+- [License](#license)
+- [Acknowledgments](#acknowledgments)
 
-## Supported Applications
+---
 
-### ComfyUI
-- Web UI for Stable Diffusion with a node-based interface
-- Includes comfy-cli for command-line operations
-- Automatic model management and download support
-- Configurable for different VRAM usage modes
+## 🚀 Supported Applications
 
-### FramePack
-- Next-frame prediction model for video generation
-- Supports up to 120 seconds of video generation
-- Includes both standard and F1 models
-- Optimized for 6GB+ VRAM GPUs
-
-### Stable Diffusion WebUI (AUTOMATIC1111)
-- Popular web interface for Stable Diffusion image generation
-- Supports text-to-image, image-to-image, inpainting, outpainting, model merging, and extensions
-- API access and network access enabled by default
-- Systemd service support for background/automatic startup
-- Root execution supported (with `-f` flag)
-- TCMalloc (google-perftools) installed for improved memory usage
-
-## Module Structure
-
-```
-install-scripts/
-├── install_comfyui.sh      # ComfyUI installation script
-├── install_framepack.sh    # FramePack installation script
-├── install_stablediffusion.sh # Stable Diffusion WebUI installer
-└── modules/
-    ├── install_python.sh       # Python environment setup
-    ├── install_nvidia_drivers.sh   # NVIDIA driver installation
-    └── install_cuda_nvcc.sh    # CUDA toolkit and compiler setup
-```
-
-## Installation
-
-1. Clone the repository:
-```bash
-git clone https://github.com/omiinaya/install-scripts.git
-cd install-scripts
-```
-
-2. Make scripts executable:
-```bash
-chmod +x *.sh modules/*.sh
-```
-
-3. Run the desired installation script:
-```bash
-# For ComfyUI
-./install_comfyui.sh
-
-# For FramePack
-./install_framepack.sh
-
-# For Stable Diffusion WebUI (AUTOMATIC1111)
-./install_stablediffusion.sh
-```
-
-## Stable Diffusion WebUI Usage
-
-- The installer sets up a systemd service (`sd-webui.service`) that runs Stable Diffusion WebUI as root (using the `-f` flag) and enables API and network access by default.
-- The service will start automatically on boot, or you can control it manually:
-
-```bash
-sudo systemctl start sd-webui      # Start the service
-sudo systemctl stop sd-webui       # Stop the service
-sudo systemctl status sd-webui     # Check status
-```
-
-- Access the WebUI from any device on your local network:
-  - http://your-server-ip:7860
-
-- The service command is:
+### [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
+> **Node-based Stable Diffusion Web UI**
+- **Features:** Modern, modular workflow UI for Stable Diffusion. Model management, VRAM modes, CLI, and more.
+- **Requirements:** NVIDIA GPU (6GB+), Debian 12, 32GB+ RAM recommended.
+- **Quickstart:**
   ```bash
-  bash webui.sh -f --xformers --listen --enable-insecure-extension-access --api
+  ./install_comfyui.sh
+  # Then: ~/launch_comfyui.sh or systemctl start comfyui
+  # Access: http://localhost:8188
   ```
 
-- TCMalloc (from google-perftools) is installed and available for improved memory usage.
+---
 
-## Environment Variables
+### [FramePack](https://github.com/lllyasviel/FramePack)
+> **Next-frame video generation AI**
+- **Features:** Generate up to 120s of video, F1 model for dynamic motion, optimized for 6GB+ VRAM.
+- **Requirements:** NVIDIA GPU (6GB+), Debian 12, 32GB+ RAM recommended.
+- **Quickstart:**
+  ```bash
+  ./install_framepack.sh
+  # Then: ~/launch_framepack.sh or systemctl start framepack
+  # Access: http://localhost:7860
+  ```
 
-The scripts support customization through environment variables:
+---
 
-- `PYTHON_INSTALLER_URL`: Custom URL for Python installer module
-- `NVIDIA_INSTALLER_URL`: Custom URL for NVIDIA driver installer module
-- `CUDA_INSTALLER_URL`: Custom URL for CUDA toolkit installer module
+### [Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
+> **The most popular SD web interface**
+- **Features:** Text2img, img2img, inpainting, extensions, API, root/systemd support, TCMalloc for memory.
+- **Requirements:** NVIDIA GPU (6GB+), Debian 12, 32GB+ RAM recommended, TCMalloc auto-installed.
+- **Quickstart:**
+  ```bash
+  ./install_stablediffusion.sh
+  # Service: systemctl start sd-webui
+  # Access: http://localhost:7860
+  ```
 
-## Common Operations
+---
 
-### ComfyUI
+### [TRELLIS (Microsoft)](https://github.com/microsoft/TRELLIS)
+> **Scalable, versatile 3D generation (CVPR'25 Spotlight)**
+- **Features:** 3D latent diffusion, multi-GPU, conda-based, CUDA 11.8/12.2, modular install.
+- **Requirements:** NVIDIA GPU (16GB+), Debian 12, Miniconda (auto-installed), CUDA 11.8/12.2.
+- **Quickstart:**
+  ```bash
+  ./install_trellis.sh
+  # Then: conda activate trellis
+  # See repo for usage
+  ```
 
-Start the service:
-```bash
-# Using launcher script
-~/launch_comfyui.sh
+---
 
-# Using systemd (if enabled)
-sudo systemctl start comfyui
-```
+## 🧩 Reusable Modules
 
-Access the UI:
-- Local: http://localhost:8188
-- Network: http://your-server-ip:8188
+- `modules/install_python.sh` — Python 3.x, venv, pipx
+- `modules/install_nvidia_drivers.sh` — NVIDIA drivers (Debian 12)
+- `modules/install_cuda_nvcc.sh` — CUDA toolkit & nvcc
 
-### FramePack
+All app installers use these modules for consistent, reliable setup.
 
-Start the service:
-```bash
-# Standard model
-~/launch_framepack.sh
+---
 
-# F1 model (more dynamic movements)
-~/launch_framepack_f1.sh
+## 🖥️ System Requirements
+- **OS:** Debian 12 (Bookworm, Proxmox container recommended)
+- **GPU:** NVIDIA (6GB+ for most, 16GB+ for TRELLIS)
+- **RAM:** 32GB+ recommended
+- **Storage:** 50GB+ free (models)
+- **Network:** Internet access for downloads
 
-# Using systemd (if enabled)
-sudo systemctl start framepack
-```
+---
 
-Access the UI:
-- Local: http://localhost:7860
-- Network: http://your-server-ip:7860
+## ⚡ Installation
+1. **Clone this repo:**
+   ```bash
+   git clone https://github.com/omiinaya/install-scripts.git
+   cd install-scripts
+   chmod +x *.sh modules/*.sh
+   ```
+2. **Run the installer for your app:**
+   ```bash
+   ./install_comfyui.sh           # or
+   ./install_framepack.sh         # or
+   ./install_stablediffusion.sh   # or
+   ./install_trellis.sh
+   ```
+3. **Follow the post-install instructions for each app.**
 
-### Stable Diffusion WebUI
+---
 
-Start/stop the service:
-```bash
-sudo systemctl start sd-webui
-sudo systemctl stop sd-webui
-```
+## 🤝 Contributing
+- PRs welcome! Add new apps, improve modules, or suggest features.
+- See [CONTRIBUTING.md](CONTRIBUTING.md) if available.
 
-Access the UI:
-- Local: http://localhost:7860
-- Network: http://your-server-ip:7860
+---
 
-## Features
+## 📄 License
+MIT — see [LICENSE](LICENSE)
 
-### Automated Setup
-- System package updates
-- Basic dependency installation
-- Python environment configuration
-- NVIDIA driver installation
-- CUDA toolkit setup
-- Virtual environment creation
-- Application-specific dependencies
-- Launcher script generation (ComfyUI, FramePack)
-- Systemd service creation (all apps)
+---
 
-### Safety Features
-- Error checking and validation
-- Installation testing
-- Environment verification
-- Backup prompts for existing installations
-- Detailed logging and error messages
-
-### User Experience
-- Colored output for better readability
-- Interactive yes/no prompts
-- Progress indicators
-- Detailed installation instructions
-- Post-installation usage guide
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
+## 🙏 Acknowledgments
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
 - [FramePack](https://github.com/lllyasviel/FramePack)
 - [Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
-- NVIDIA for CUDA and GPU support 
+- [TRELLIS (Microsoft)](https://github.com/microsoft/TRELLIS)
+- NVIDIA, PyTorch, and the open-source community 
