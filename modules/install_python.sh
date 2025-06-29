@@ -93,10 +93,14 @@ install_pyenv() {
         if ! grep -q 'PYENV_ROOT' "$SHELL_PROFILE"; then
             cat >> "$SHELL_PROFILE" << 'EOF'
 
-# pyenv configuration
+# --- pyenv configuration ---
+# The following lines were automatically added by an installation script.
 export PYENV_ROOT="$HOME/.pyenv"
-command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init -)"
+export PATH="$PYENV_ROOT/bin:$PATH"
+if command -v pyenv 1>/dev/null 2>&1; then
+  eval "$(pyenv init --path)"
+fi
+# --- end pyenv configuration ---
 EOF
         fi
     fi
