@@ -62,6 +62,10 @@ pip install --upgrade pip
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 
+# Install optional performance libraries
+log "Installing performance optimization libraries..."
+pip install xformers flash-attn sage-attention==1.0.6
+
 # 8. Create Launcher Script
 log "Creating launcher script at $HOME/launch_framepack.sh"
 LAUNCHER_SCRIPT="$HOME/launch_framepack.sh"
