@@ -83,4 +83,13 @@ python -m pip install ninja
 python -m pip install git+https://github.com/Dao-AILab/flash-attention.git@v2.6.3
 
 echo "HunyuanVideo-Avatar installation completed successfully!"
-echo "To use the environment, run: conda activate HunyuanVideo-Avatar" 
+echo "To use the environment, run: conda activate HunyuanVideo-Avatar"
+
+# On the Linux system where you ran the installation:
+source ~/.bashrc
+# OR
+export PATH="$HOME/miniconda3/bin:$PATH"
+source "$HOME/miniconda3/etc/profile.d/conda.sh"
+
+# Then try:
+conda activate HunyuanVideo-Avatar 
