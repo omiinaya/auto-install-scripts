@@ -15,10 +15,6 @@ VENV_DIR="$HOME/framepack-env"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODULES_DIR="$SCRIPT_DIR/modules"
 
-source "$MODULES_DIR/install_nvidia_drivers.sh"
-source "$MODULES_DIR/install_cuda_nvcc.sh"
-source "$MODULES_DIR/install_python.sh"
-
 # --- Logging ---
 log() {
     echo "--- $1 ---"
@@ -31,18 +27,25 @@ apt-get install -y git curl wget build-essential software-properties-common apt-
 
 # 2. Install NVIDIA Drivers
 log "Installing NVIDIA Drivers"
+source "$MODULES_DIR/install_nvidia_drivers.sh"
 install_nvidia_drivers
 
 # 3. Install Python
 log "Installing Python $PYTHON_VERSION"
+source "$MODULES_DIR/install_python.sh"
 install_python "$PYTHON_VERSION"
 
 # 4. Install CUDA
 log "Installing CUDA $CUDA_VERSION"
+source "$MODULES_DIR/install_cuda_nvcc.sh"
 install_cuda_nvcc "$CUDA_VERSION"
 
 # 5. Create FramePack Workspace
 log "Setting up FramePack workspace at $FRAMEPACK_DIR"
+# The pyenv installation process corrupts the PATH, so we must redefine it
+# to include the shims for the python executable to be found.
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
 rm -rf "$FRAMEPACK_DIR"
 git clone https://github.com/lllyasviel/FramePack.git "$FRAMEPACK_DIR"
 cd "$FRAMEPACK_DIR"
