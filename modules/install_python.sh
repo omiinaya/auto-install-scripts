@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Python Installation Module - Simplified with Version Support
+# Python Installation Module - Using pyenv for Version Management
 # Usage: ./install_python.sh [version]
 # Default version: Auto-detected latest available, fallback to 3.11
 # Example: ./install_python.sh 3.10
@@ -30,80 +30,258 @@ warn() {
     echo -e "${YELLOW}[WARNING] $1${NC}"
 }
 
-# Detect latest available Python version
-detect_python_version() {
-    # Update package list first
-    apt update >/dev/null 2>&1
-    
-    # Check for available Python versions in order of preference
-    for version in 3.12 3.11 3.10 3.9; do
-        if apt-cache show python${version} >/dev/null 2>&1; then
-            info "Latest available Python version: $version"
-            echo "$version"
-            return 0
-        fi
-    done
-    
-    # Fallback to 3.11 if nothing found
-    warn "Could not detect available Python versions, using fallback"
-    echo "3.11"
-}
-
-# Parse version argument or auto-detect
-if [ -n "$1" ]; then
-    PYTHON_VERSION="$1"
-    info "Using specified Python version: $PYTHON_VERSION"
-else
-    PYTHON_VERSION=$(detect_python_version)
-    info "Using auto-detected Python version: $PYTHON_VERSION"
-fi
-
-log "Installing Python $PYTHON_VERSION and related tools"
-
-# Install Python and tools
-install_python() {
-    log "Installing Python $PYTHON_VERSION and related tools..."
+# Install system dependencies for pyenv
+install_pyenv_dependencies() {
+    log "Installing pyenv dependencies..."
     
     # Update package list
     apt update
     
-    # Install Python version-specific packages
-    info "Installing Python $PYTHON_VERSION and essential tools..."
+    # Install build dependencies for Python compilation
     apt install -y \
-        sudo \
-        python${PYTHON_VERSION} \
-        python${PYTHON_VERSION}-pip \
-        python${PYTHON_VERSION}-venv \
-        python${PYTHON_VERSION}-full \
-        python${PYTHON_VERSION}-dev \
-        python3-setuptools \
-        python3-wheel \
-        pipx
+        make \
+        build-essential \
+        libssl-dev \
+        zlib1g-dev \
+        libbz2-dev \
+        libreadline-dev \
+        libsqlite3-dev \
+        wget \
+        curl \
+        llvm \
+        libncursesw5-dev \
+        xz-utils \
+        tk-dev \
+        libxml2-dev \
+        libxmlsec1-dev \
+        libffi-dev \
+        liblzma-dev \
+        git
     
-    # Create python3 symlink if it doesn't exist or points to wrong version
-    if ! command -v python3 >/dev/null 2>&1 || ! python3 --version | grep -q "$PYTHON_VERSION"; then
-        info "Creating python3 symlink for Python $PYTHON_VERSION..."
-        update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1
-    fi
-    
-    # Verify Python version
-    INSTALLED_VERSION=$(python3 --version | cut -d' ' -f2)
-    log "Python version installed: $INSTALLED_VERSION"
-    
-    # Check if Python is 3.9+
-    if ! python3 -c "import sys; exit(0 if sys.version_info >= (3, 9) else 1)"; then
-        error "Python version is too old. Requires Python 3.9 or higher."
-    fi
-    
-    log "Python $PYTHON_VERSION installation completed"
+    info "pyenv dependencies installed successfully"
 }
 
-# Main function
-main() {
-    install_python
+# Install pyenv
+install_pyenv() {
+    log "Installing pyenv..."
+    
+    # Check if pyenv is already installed
+    if command -v pyenv >/dev/null 2>&1; then
+        info "pyenv is already installed: $(pyenv --version)"
+        return 0
+    fi
+    
+    # Install pyenv using the official installer
+    curl https://pyenv.run | bash
+    
+    # Set up pyenv in current session
+    export PYENV_ROOT="$HOME/.pyenv"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    eval "$(pyenv init -)"
+    eval "$(pyenv virtualenv-init -)"
+    
+    # Add pyenv to shell profile for future sessions
+    SHELL_PROFILE=""
+    if [ -f "$HOME/.bashrc" ]; then
+        SHELL_PROFILE="$HOME/.bashrc"
+    elif [ -f "$HOME/.bash_profile" ]; then
+        SHELL_PROFILE="$HOME/.bash_profile"
+    elif [ -f "$HOME/.profile" ]; then
+        SHELL_PROFILE="$HOME/.profile"
+    fi
+    
+    if [ -n "$SHELL_PROFILE" ]; then
+        info "Adding pyenv to $SHELL_PROFILE"
+        
+        # Check if pyenv is already in the profile
+        if ! grep -q "PYENV_ROOT" "$SHELL_PROFILE"; then
+            cat >> "$SHELL_PROFILE" << 'EOF'
+
+# pyenv configuration
+export PYENV_ROOT="$HOME/.pyenv"
+export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init -)"
+eval "$(pyenv virtualenv-init -)"
+EOF
+        fi
+    fi
+    
+    log "pyenv installed successfully"
 }
 
-# Run if executed directly
+# Initialize pyenv in current session
+init_pyenv() {
+    export PYENV_ROOT="$HOME/.pyenv"
+    export PATH="$PYENV_ROOT/bin:$PATH"
+    
+    if command -v pyenv >/dev/null 2>&1; then
+        eval "$(pyenv init -)"
+        eval "$(pyenv virtualenv-init -)"
+    else
+        error "pyenv not found after installation"
+    fi
+}
+
+# Get the latest available Python version for a major.minor version
+get_latest_python_version() {
+    local major_minor="$1"
+    
+    # List available versions and filter for the requested major.minor
+    pyenv install --list | grep -E "^\s*${major_minor}\.[0-9]+$" | tail -1 | tr -d ' '
+}
+
+# Detect the best Python version to install
+detect_python_version() {
+    info "Detecting best Python version to install..."
+    
+    # Try versions in order of preference
+    for version in "3.12" "3.11" "3.10" "3.9"; do
+        local latest=$(get_latest_python_version "$version")
+        if [ -n "$latest" ]; then
+            info "Latest available Python version for $version: $latest"
+            echo "$latest"
+            return 0
+        fi
+    done
+    
+    warn "Could not detect available Python versions, using fallback"
+    echo "3.11.0"
+}
+
+# Install Python version using pyenv
+install_python_version() {
+    local version="$1"
+    
+    log "Installing Python $version using pyenv..."
+    
+    # Check if version is already installed
+    if pyenv versions | grep -q "$version"; then
+        info "Python $version is already installed"
+    else
+        info "Compiling Python $version (this may take several minutes)..."
+        pyenv install "$version"
+    fi
+    
+    # Set as global default
+    pyenv global "$version"
+    
+    # Verify installation
+    local installed_version=$(python --version 2>&1 | cut -d' ' -f2)
+    log "Python version set: $installed_version"
+    
+    # Upgrade pip
+    info "Upgrading pip..."
+    python -m pip install --upgrade pip
+    
+    # Install essential packages
+    info "Installing essential Python packages..."
+    python -m pip install \
+        setuptools \
+        wheel \
+        virtualenv \
+        pipenv
+    
+    log "Python $version installation completed successfully"
+}
+
+# Create a project-specific virtual environment
+create_project_venv() {
+    local project_name="$1"
+    local python_version="$2"
+    
+    if [ -z "$project_name" ]; then
+        info "No project name specified, skipping virtual environment creation"
+        return 0
+    fi
+    
+    log "Creating virtual environment for project: $project_name"
+    
+    # Create virtual environment using pyenv
+    if ! pyenv virtualenvs | grep -q "$project_name"; then
+        pyenv virtualenv "$python_version" "$project_name"
+        info "Virtual environment '$project_name' created"
+    else
+        info "Virtual environment '$project_name' already exists"
+    fi
+    
+    # Instructions for activating the environment
+    info "To activate this environment later, run:"
+    info "  pyenv activate $project_name"
+    info "To deactivate, run:"
+    info "  pyenv deactivate"
+}
+
+# Main installation function
+install_python() {
+    log "Starting Python installation with pyenv..."
+    
+    # Parse arguments
+    local requested_version="$1"
+    local project_name="$2"
+    
+    # Install system dependencies
+    install_pyenv_dependencies
+    
+    # Install pyenv
+    install_pyenv
+    
+    # Initialize pyenv for current session
+    init_pyenv
+    
+    # Determine Python version to install
+    local python_version
+    if [ -n "$requested_version" ]; then
+        # Check if it's a major.minor version, get the latest patch version
+        if [[ "$requested_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            python_version=$(get_latest_python_version "$requested_version")
+            if [ -z "$python_version" ]; then
+                warn "No Python $requested_version versions available, trying exact version"
+                python_version="$requested_version"
+            fi
+        else
+            python_version="$requested_version"
+        fi
+        info "Using requested Python version: $python_version"
+    else
+        python_version=$(detect_python_version)
+        info "Using auto-detected Python version: $python_version"
+    fi
+    
+    # Install the Python version
+    install_python_version "$python_version"
+    
+    # Create project virtual environment if requested
+    if [ -n "$project_name" ]; then
+        create_project_venv "$project_name" "$python_version"
+    fi
+    
+    # Print usage information
+    echo
+    info "Python installation completed!"
+    info "Installed Python version: $(python --version)"
+    info "Python location: $(which python)"
+    echo
+    info "pyenv commands:"
+    info "  pyenv versions        - List installed Python versions"
+    info "  pyenv global <version> - Set global Python version"
+    info "  pyenv local <version>  - Set local Python version for current directory"
+    info "  pyenv virtualenv <version> <name> - Create virtual environment"
+    info "  pyenv activate <name>  - Activate virtual environment"
+    echo
+    info "To use pyenv in new shell sessions, restart your shell or run:"
+    info "  source ~/.bashrc"
+}
+
+# If script is run directly (not sourced), call the main function
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+    # Parse command line arguments
+    PYTHON_VERSION="${1:-}"
+    PROJECT_NAME="${2:-}"
+    
+    # Override with environment variable if set
+    if [ -n "${PYTHON_VERSION:-}" ]; then
+        PYTHON_VERSION="$PYTHON_VERSION"
+    fi
+    
+    install_python "$PYTHON_VERSION" "$PROJECT_NAME"
 fi 
