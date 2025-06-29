@@ -107,7 +107,7 @@ EOF
 # Initialize pyenv in the current script session
 init_pyenv() {
     export PYENV_ROOT="$HOME/.pyenv"
-    export PATH="$PYENV_ROOT/bin:$PATH"
+    export PATH="$PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH"
     
     if ! command -v pyenv >/dev/null 2>&1; then
         error "pyenv not found after installation. Please check the installation and PATH."
