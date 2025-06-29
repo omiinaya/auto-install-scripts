@@ -116,13 +116,15 @@ install_python() {
     # Download and source the installer script
     if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
         chmod +x install_python.sh
-        info "Running Python installer (default version for FramePack compatibility)..."
-        info "Note: FramePack recommends Python 3.10, but Python 3.11 (Debian 12 default) is compatible"
+        info "Running Python installer for FramePack (Python 3.10 required)..."
+        info "Note: FramePack specifically requires Python 3.10 for optimal compatibility"
         
         # Source the script to use its functions
         source ./install_python.sh
         
-        # Call the function directly
+        # Call the function directly with FramePack's required version
+        PYTHON_VERSION="3.10"
+        info "Using Python version: $PYTHON_VERSION"
         install_python
         
         log "Python installation completed"
@@ -181,8 +183,8 @@ install_nvcc() {
     # Download and execute the installer script
     if curl -fSsl -o install_cuda_nvcc.sh "$CUDA_INSTALLER_URL"; then
         chmod +x install_cuda_nvcc.sh
-        info "Running CUDA installer..."
-        ./install_cuda_nvcc.sh
+        info "Running CUDA installer for FramePack (CUDA 12.6)..."
+        ./install_cuda_nvcc.sh 12.6
         log "CUDA toolkit installation completed"
     else
         error "Failed to download CUDA installer from GitHub. Please check your internet connection or install CUDA toolkit manually."

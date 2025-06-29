@@ -1,24 +1,17 @@
 #!/bin/bash
+set -e
 
-# Standalone NVIDIA Drivers Installer for Debian 12 (Proxmox Container)
-# This script installs NVIDIA drivers with CUDA support
-
-set -e  # Exit on any error
+# NVIDIA Drivers Installation Module - Simplified
+# No questions, just install drivers
 
 # Colors for output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
+RED='\033[0;31m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Logging function
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARNING] $1${NC}"
 }
 
 error() {
@@ -30,44 +23,15 @@ info() {
     echo -e "${BLUE}[INFO] $1${NC}"
 }
 
-# Function to ask yes/no questions and keep asking until valid response
-ask_yes_no() {
-    local prompt="$1"
-    local default="$2"  # "y" or "n"
-    local response
+# Install NVIDIA drivers
+install_nvidia_drivers() {
+    log "Installing NVIDIA drivers..."
     
-    while true; do
-        if [ "$default" = "y" ]; then
-            read -p "$prompt (Y/n): " -n 1 -r response
-        else
-            read -p "$prompt (y/N): " -n 1 -r response
-        fi
-        echo
-        
-        # Handle empty response (just pressed Enter)
-        if [ -z "$response" ]; then
-            response="$default"
-        fi
-        
-        case "$response" in
-            [Yy]* ) return 0;;
-            [Nn]* ) return 1;;
-            * ) warn "Please answer yes (y) or no (n).";;
-        esac
-    done
-}
-
-
-# Update system packages
-update_system() {
-    log "Updating system packages..."
-    sudo apt update && sudo apt upgrade -y
-}
-
-# Install basic dependencies
-install_basic_deps() {
-    log "Installing basic dependencies..."
-    sudo apt install -y \
+    # Update system
+    apt update && apt upgrade -y
+    
+    # Install basic dependencies
+    apt install -y \
         curl \
         wget \
         gnupg \
@@ -75,117 +39,40 @@ install_basic_deps() {
         software-properties-common \
         apt-transport-https \
         ca-certificates
-}
-
-# Install NVIDIA drivers for Proxmox container
-install_nvidia_drivers() {
-    log "Installing NVIDIA drivers for Proxmox container..."
-    
-    # Check if NVIDIA drivers are already installed
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        info "NVIDIA drivers appear to be already installed:"
-        nvidia-smi --version 2>/dev/null || true
-        if ! ask_yes_no "Do you want to reinstall NVIDIA drivers?" "y"; then
-            log "Skipping NVIDIA driver installation"
-            return 0
-        fi
-    fi
     
     # Add NVIDIA CUDA repository
     info "Adding NVIDIA CUDA repository..."
     curl -fSsl -O https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
-    sudo dpkg -i cuda-keyring_1.1-1_all.deb
-    
-    # Update package list
-    sudo apt update
+    dpkg -i cuda-keyring_1.1-1_all.deb
+    apt update
     
     # Install NVIDIA drivers
-    info "Installing NVIDIA drivers..."
-    sudo apt -V install -y nvidia-driver-cuda nvidia-kernel-dkms
+    info "Installing NVIDIA drivers with CUDA support..."
+    apt install -y nvidia-driver-cuda nvidia-kernel-dkms
     
     # Reconfigure NVIDIA kernel DKMS
-    info "Reconfiguring NVIDIA kernel DKMS..."
-    sudo dpkg-reconfigure nvidia-kernel-dkms
+    dpkg-reconfigure nvidia-kernel-dkms
     
     # Clean up
     rm -f cuda-keyring_1.1-1_all.deb
     
-    log "NVIDIA drivers installed successfully"
-}
-
-# Test NVIDIA installation
-test_nvidia() {
-    log "Testing NVIDIA installation..."
-    
-    # Test nvidia-smi
+    # Verify installation
     if command -v nvidia-smi >/dev/null 2>&1; then
-        info "nvidia-smi is available:"
+        info "NVIDIA drivers installed successfully"
         nvidia-smi --version
-        
-        # Try to get GPU information
-        info "GPU information:"
-        nvidia-smi -L || warn "Could not list GPUs (this is normal in some container environments)"
     else
-        warn "nvidia-smi not found. Installation may have failed."
-        return 1
+        error "NVIDIA driver installation failed"
     fi
     
-    # Check for NVIDIA kernel modules
-    info "Checking NVIDIA kernel modules:"
-    lsmod | grep nvidia || warn "NVIDIA kernel modules not loaded (may require reboot)"
-    
-    log "NVIDIA driver test completed"
+    log "NVIDIA drivers installation completed"
 }
 
-# Print final instructions
-print_instructions() {
-    echo
-    echo "=================================="
-    log "NVIDIA Drivers Installation Complete!"
-    echo "=================================="
-    echo
-    info "Installation Summary:"
-    echo "  - NVIDIA drivers with CUDA support installed"
-    echo "  - Repository: NVIDIA CUDA repository for Debian 12"
-    echo "  - Packages: nvidia-driver-cuda, nvidia-kernel-dkms"
-    echo
-    info "Next Steps:"
-    echo "  1. Reboot your system if this is the first NVIDIA driver installation"
-    echo "  2. Test with: nvidia-smi"
-    echo "  3. For CUDA development, run the CUDA/nvcc installer script"
-    echo
-    info "Verification Commands:"
-    echo "  nvidia-smi --version    : Check driver version"
-    echo "  nvidia-smi -L          : List GPUs"
-    echo "  lsmod | grep nvidia     : Check kernel modules"
-    echo
-    if [ -f "/var/log/nvidia-installer.log" ]; then
-        info "Installation logs available at: /var/log/nvidia-installer.log"
-    fi
-    echo
-}
-
-# Main installation function
+# Main function
 main() {
-    echo "=================================="
-    log "NVIDIA Drivers Installer for Debian 12"
-    echo "=================================="
-    echo
-    info "This script will install NVIDIA drivers with CUDA support"
-    info "Designed for Debian 12 (Proxmox containers)"
-    echo
-    
-    if ! ask_yes_no "Do you want to continue with the NVIDIA driver installation?" "y"; then
-        info "Installation cancelled."
-        exit 0
-    fi
-    
-    update_system
-    install_basic_deps
     install_nvidia_drivers
-    test_nvidia
-    print_instructions
 }
 
-# Run main function
-main "$@" 
+# Run if executed directly
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi 

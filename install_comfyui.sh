@@ -103,12 +103,14 @@ install_python() {
     # Download and source the installer script
     if curl -fSsl -o install_python.sh "$PYTHON_INSTALLER_URL"; then
         chmod +x install_python.sh
-        info "Running Python installer (default version for ComfyUI)..."
+        info "Running Python installer for ComfyUI (Python 3.12 recommended)..."
         
         # Source the script to use its functions
         source ./install_python.sh
         
-        # Call the function directly
+        # Call the function directly with ComfyUI's recommended version
+        PYTHON_VERSION="3.12"
+        info "Using Python version: $PYTHON_VERSION"
         install_python
         
         log "Python installation completed"
@@ -167,8 +169,8 @@ install_nvcc() {
     # Download and execute the installer script
     if curl -fSsl -o install_cuda_nvcc.sh "$CUDA_INSTALLER_URL"; then
         chmod +x install_cuda_nvcc.sh
-        info "Running CUDA installer..."
-        ./install_cuda_nvcc.sh
+        info "Running CUDA installer for ComfyUI (CUDA 12.4)..."
+        ./install_cuda_nvcc.sh 12.4
         log "CUDA toolkit installation completed"
     else
         error "Failed to download CUDA installer from GitHub. Please check your internet connection or install CUDA toolkit manually."
