@@ -74,12 +74,6 @@ install_pyenv() {
     # Install pyenv using the official installer
     curl https://pyenv.run | bash
     
-    # Set up pyenv in current session
-    export PYENV_ROOT="$HOME/.pyenv"
-    export PATH="$PYENV_ROOT/bin:$PATH"
-    eval "$(pyenv init -)"
-    eval "$(pyenv virtualenv-init -)"
-    
     # Add pyenv to shell profile for future sessions
     SHELL_PROFILE=""
     if [ -f "$HOME/.bashrc" ]; then
@@ -93,15 +87,14 @@ install_pyenv() {
     if [ -n "$SHELL_PROFILE" ]; then
         info "Adding pyenv to $SHELL_PROFILE"
         
-        # Check if pyenv is already in the profile
-        if ! grep -q "PYENV_ROOT" "$SHELL_PROFILE"; then
+        # Ensure the configuration is not duplicated
+        if ! grep -q 'PYENV_ROOT' "$SHELL_PROFILE"; then
             cat >> "$SHELL_PROFILE" << 'EOF'
 
 # pyenv configuration
 export PYENV_ROOT="$HOME/.pyenv"
-export PATH="$PYENV_ROOT/bin:$PATH"
+command -v pyenv >/dev/null || export PATH="$PYENV_ROOT/bin:$PATH"
 eval "$(pyenv init -)"
-eval "$(pyenv virtualenv-init -)"
 EOF
         fi
     fi
@@ -109,16 +102,13 @@ EOF
     log "pyenv installed successfully"
 }
 
-# Initialize pyenv in current session
+# Initialize pyenv in the current script session
 init_pyenv() {
     export PYENV_ROOT="$HOME/.pyenv"
     export PATH="$PYENV_ROOT/bin:$PATH"
     
-    if command -v pyenv >/dev/null 2>&1; then
-        eval "$(pyenv init -)"
-        eval "$(pyenv virtualenv-init -)"
-    else
-        error "pyenv not found after installation"
+    if ! command -v pyenv >/dev/null 2>&1; then
+        error "pyenv not found after installation. Please check the installation and PATH."
     fi
 }
 
@@ -224,8 +214,8 @@ install_python() {
     
     # Install pyenv
     install_pyenv
-    
-    # Initialize pyenv for current session
+
+    # Initialize pyenv for current session without corrupting the shell state
     init_pyenv
     
     # Determine Python version to install
