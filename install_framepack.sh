@@ -53,21 +53,75 @@ cd "$FRAMEPACK_DIR"
 # 6. Create and activate Python virtual environment
 log "Creating Python virtual environment at $VENV_DIR"
 rm -rf "$VENV_DIR"
-python$PYTHON_VERSION -m venv "$VENV_DIR"
+python${PYTHON_VERSION} -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
 # 7. Install Python dependencies
 log "Installing Python dependencies for FramePack"
 pip install --upgrade pip
-pip install -r requirements.txt
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements.txt
 
-# 8. Run setup
-log "Running FramePack setup"
-python setup.py develop
+# 8. Create Launcher Script
+log "Creating launcher script at $HOME/launch_framepack.sh"
+LAUNCHER_SCRIPT="$HOME/launch_framepack.sh"
+
+cat > "$LAUNCHER_SCRIPT" << EOF
+#!/bin/bash
+# FramePack Launcher Script
+
+echo "--- Starting FramePack ---"
+
+# Activate Python virtual environment
+source "$VENV_DIR/bin/activate"
+
+# Navigate to the application directory
+cd "$FRAMEPACK_DIR"
+
+# Launch the Gradio demo and make it accessible over the network
+echo "Launching Gradio demo on all network interfaces..."
+python demo_gradio.py --server 0.0.0.0
+EOF
+
+chmod +x "$LAUNCHER_SCRIPT"
+
+# 9. Create and enable systemd service
+log "Creating systemd service to run FramePack on startup"
+SERVICE_FILE="/etc/systemd/system/framepack.service"
+CURRENT_USER=$(whoami)
+
+# Using sudo to write the service file
+sudo tee "$SERVICE_FILE" > /dev/null << EOF
+[Unit]
+Description=FramePack Gradio Server
+After=network.target
+
+[Service]
+Type=simple
+User=$CURRENT_USER
+WorkingDirectory=$FRAMEPACK_DIR
+ExecStart=/bin/bash $LAUNCHER_SCRIPT
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+log "Reloading systemd and enabling the FramePack service"
+sudo systemctl daemon-reload
+sudo systemctl enable framepack.service
 
 echo "FramePack installation completed successfully."
-echo "To use FramePack, activate the virtual environment:"
-echo "source $VENV_DIR/bin/activate"
-echo "Then navigate to the directory:"
-echo "cd $FRAMEPACK_DIR"
+echo "To use FramePack manually:"
+echo "1. Activate the virtual environment: source $VENV_DIR/bin/activate"
+echo "2. Navigate to the directory: cd $FRAMEPACK_DIR"
+echo "3. Run the application: python demo_gradio.py"
+echo
+echo "--- Systemd Service Information ---"
+echo "A service has been created to start FramePack automatically on boot."
+echo "You can manage it with these commands:"
+echo " - Start now: sudo systemctl start framepack.service"
+echo " - Stop:      sudo systemctl stop framepack.service"
+echo " - Status:    sudo systemctl status framepack.service"
+echo " - Logs:      sudo journalctl -u framepack.service -f"
