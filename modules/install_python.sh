@@ -64,13 +64,15 @@ install_pyenv_dependencies() {
 # Install pyenv
 install_pyenv() {
     log "Installing pyenv..."
-    
-    # Check if pyenv is already installed
-    if command -v pyenv >/dev/null 2>&1; then
-        info "pyenv is already installed: $(pyenv --version)"
+
+    # The pyenv installer script fails if the ~/.pyenv directory already exists.
+    # We will check for the directory's existence and assume pyenv is installed if found.
+    if [ -d "$HOME/.pyenv" ]; then
+        info "pyenv directory found at '$HOME/.pyenv'. Skipping installation."
         return 0
     fi
-    
+
+    info "pyenv not found, proceeding with installation."
     # Install pyenv using the official installer
     curl https://pyenv.run | bash
     
