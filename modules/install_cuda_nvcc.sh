@@ -1,10 +1,8 @@
 #!/bin/bash
 set -e
 
-# CUDA Toolkit Installation Module - Simplified with Auto-Detection
-# Usage: ./install_cuda_nvcc.sh [version]
-# Default version: Auto-detected from nvidia-smi, fallback to 12.6
-# Example: ./install_cuda_nvcc.sh 12.4
+# CUDA Toolkit Installation Module - Simplified
+# This module installs a specified version of the CUDA toolkit.
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -13,13 +11,14 @@ BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# --- Logging Functions ---
 log() {
     echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')] $1${NC}"
 }
 
 error() {
     echo -e "${RED}[ERROR] $1${NC}"
-    exit 1
+    # No longer exiting to allow apt to handle the error
 }
 
 info() {
@@ -30,119 +29,79 @@ warn() {
     echo -e "${YELLOW}[WARNING] $1${NC}"
 }
 
-# Detect CUDA version from nvidia-smi
-detect_cuda_version() {
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        # Get CUDA version from nvidia-smi output
-        DETECTED_VERSION=$(nvidia-smi | grep -o "CUDA Version: [0-9]\+\.[0-9]\+" | cut -d' ' -f3)
-        if [ -n "$DETECTED_VERSION" ]; then
-            info "Detected CUDA version from nvidia-smi: $DETECTED_VERSION"
-            echo "$DETECTED_VERSION"
-        else
-            warn "Could not parse CUDA version from nvidia-smi output"
-            echo "12.6"
-        fi
-    else
-        warn "nvidia-smi not found, using fallback version"
-        echo "12.6"
+# --- Main Installation Function ---
+install_cuda_nvcc() {
+    local requested_version="$1"
+
+    if [ -z "$requested_version" ]; then
+        error "No CUDA version specified."
+        return 1
     fi
-}
 
-# Parse version argument or auto-detect
-if [ -n "$1" ]; then
-    CUDA_VERSION="$1"
-    info "Using specified CUDA version: $CUDA_VERSION"
-else
-    CUDA_VERSION=$(detect_cuda_version)
-    info "Using auto-detected CUDA version: $CUDA_VERSION"
-fi
+    local cuda_version_dash
+    cuda_version_dash=$(echo "$requested_version" | tr '.' '-')
 
-CUDA_VERSION_DASH=$(echo "$CUDA_VERSION" | tr '.' '-')
+    log "Starting installation for CUDA toolkit version $requested_version"
 
-log "Installing CUDA toolkit version $CUDA_VERSION"
-
-# Install CUDA toolkit
-install_cuda_toolkit() {
-    log "Installing CUDA toolkit $CUDA_VERSION and nvcc compiler..."
-    
-    # Update system
-    apt update
-    
-    # Setup CUDA repository if not already present
+    # 1. Update system and setup CUDA repository
+    apt-get update
     if ! apt-cache policy | grep -q "developer.download.nvidia.com"; then
         info "Adding NVIDIA CUDA repository..."
+        # The keyring method is more robust
         curl -fSsl -O https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb
-        dpkg -i cuda-keyring_1.1-1_all.deb
-        apt update
+        if ! dpkg -i cuda-keyring_1.1-1_all.deb; then
+            error "Failed to install CUDA keyring."
+            rm -f cuda-keyring_1.1-1_all.deb
+            return 1
+        fi
+        apt-get update
         rm -f cuda-keyring_1.1-1_all.deb
     fi
-    
-    # Install CUDA toolkit for specified version
-    info "Installing CUDA toolkit $CUDA_VERSION..."
-    apt install -y \
-        cuda-toolkit-${CUDA_VERSION_DASH} \
-        cuda-compiler-${CUDA_VERSION_DASH} \
-        cuda-nvcc-${CUDA_VERSION_DASH} \
-        cuda-libraries-dev-${CUDA_VERSION_DASH} \
-        cuda-command-line-tools-${CUDA_VERSION_DASH}
-    
-    # Configure CUDA environment
+
+    # 2. Install CUDA toolkit packages
+    info "Attempting to install CUDA toolkit packages for version $requested_version..."
+    if ! apt-get install -y --allow-downgrades \
+        "cuda-toolkit-${cuda_version_dash}" \
+        "cuda-nvcc-${cuda_version_dash}"; then
+        error "Failed to install CUDA toolkit for version $requested_version."
+        warn "Please check if the version is available in the NVIDIA repository for your system."
+        return 1
+    fi
+
+    # 3. Configure environment
     info "Configuring CUDA environment..."
+    local cuda_path="/usr/local/cuda-${requested_version}"
     
-    # Find nvcc location
-    NVCC_PATH=""
-    for path in /usr/local/cuda-${CUDA_VERSION}/bin/nvcc /usr/local/cuda/bin/nvcc; do
-        if [ -f "$path" ]; then
-            NVCC_PATH="$path"
-            break
-        fi
-    done
-    
-    # If not found in standard locations, search for it
-    if [ -z "$NVCC_PATH" ]; then
-        NVCC_PATH=$(find /usr -name nvcc -type f 2>/dev/null | head -1)
+    if [ ! -d "$cuda_path" ]; then
+        error "CUDA installation directory not found at $cuda_path"
+        return 1
     fi
-    
-    if [ -z "$NVCC_PATH" ]; then
-        error "nvcc not found after installation"
-    fi
-    
-    # Create global symlink
-    ln -sf "$NVCC_PATH" /usr/local/bin/nvcc
-    
-    # Set up CUDA environment
-    CUDA_HOME=$(dirname $(dirname "$NVCC_PATH"))
-    
-    # Create system-wide CUDA environment
+
+    # Create system-wide profile script
     cat > /etc/profile.d/cuda.sh << EOF
-export PATH="$CUDA_HOME/bin:\$PATH"
-export CUDA_HOME="$CUDA_HOME"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:\$LD_LIBRARY_PATH"
+export CUDA_HOME="${cuda_path}"
+export PATH="\$CUDA_HOME/bin:\$PATH"
+export LD_LIBRARY_PATH="\$CUDA_HOME/lib64:\$LD_LIBRARY_PATH"
 EOF
-    
-    # Add to /etc/environment
-    echo "CUDA_HOME=\"$CUDA_HOME\"" >> /etc/environment
-    
-    # Source the environment
+
+    # Source the new environment for the current session
     source /etc/profile.d/cuda.sh
-    
-    # Verify installation
-    if command -v nvcc >/dev/null 2>&1; then
-        info "CUDA $CUDA_VERSION installation successful"
-        nvcc --version | head -1
+
+    # 4. Verify installation
+    if command -v nvcc &> /dev/null; then
+        log "CUDA toolkit $requested_version installation completed successfully."
+        info "Active nvcc version: $(nvcc --version | grep 'release')"
     else
-        error "CUDA installation failed - nvcc not available"
+        error "nvcc command not found after installation."
+        return 1
     fi
-    
-    log "CUDA toolkit $CUDA_VERSION installation completed"
 }
 
-# Main function
-main() {
-    install_cuda_toolkit
-}
-
-# Run if executed directly
+# This allows the script to be run directly for testing
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+    if [ -z "$1" ]; then
+        echo "Usage: $0 <cuda-version>"
+        exit 1
+    fi
+    install_cuda_nvcc "$1"
 fi 
