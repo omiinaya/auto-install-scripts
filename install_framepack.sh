@@ -64,7 +64,10 @@ pip install -r requirements.txt
 
 # Install optional performance libraries
 log "Installing performance optimization libraries..."
-pip install xformers flash-attn sage-attention==1.0.6
+# Install flash-attn separately with no build isolation to ensure it can find torch
+pip install xformers
+pip install flash-attn --no-build-isolation
+pip install sage-attention==1.0.6
 
 # 8. Create Launcher Script
 log "Creating launcher script at $HOME/launch_framepack.sh"
