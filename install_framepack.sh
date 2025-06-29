@@ -116,16 +116,19 @@ log "Reloading systemd and enabling the FramePack service"
 sudo systemctl daemon-reload
 sudo systemctl enable framepack.service
 
+# 10. Start the service for initial setup
+log "Starting the service to trigger the initial model download"
+sudo systemctl start framepack.service
+
 echo "FramePack installation completed successfully."
-echo "To use FramePack manually:"
-echo "1. Activate the virtual environment: source $VENV_DIR/bin/activate"
-echo "2. Navigate to the directory: cd $FRAMEPACK_DIR"
-echo "3. Run the application: python demo_gradio.py"
 echo
 echo "--- Systemd Service Information ---"
-echo "A service has been created to start FramePack automatically on boot."
+echo "The FramePack service has been started in the background to download models."
+echo "This may take a significant amount of time."
+echo "You can monitor the progress by running:"
+echo "  sudo journalctl -u framepack.service -f"
+echo
+echo "Once the downloads are complete, the service will be ready."
 echo "You can manage it with these commands:"
-echo " - Start now: sudo systemctl start framepack.service"
 echo " - Stop:      sudo systemctl stop framepack.service"
 echo " - Status:    sudo systemctl status framepack.service"
-echo " - Logs:      sudo journalctl -u framepack.service -f"
