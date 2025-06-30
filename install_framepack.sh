@@ -59,7 +59,8 @@ source "$VENV_DIR/bin/activate"
 # 7. Install Python dependencies
 log "Installing Python dependencies for FramePack"
 pip install --upgrade pip setuptools wheel
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# The requirements.txt file contains the correct torch, torchvision, and index URL.
+# Installing from it directly prevents version conflicts.
 pip install -r requirements.txt
 
 # Install optional performance libraries
