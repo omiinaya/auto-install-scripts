@@ -59,8 +59,9 @@ source "$VENV_DIR/bin/activate"
 # 7. Install Python dependencies
 log "Installing Python dependencies for FramePack"
 pip install --upgrade pip setuptools wheel
-# The requirements.txt file contains the correct torch, torchvision, and index URL.
-# Installing from it directly prevents version conflicts.
+# First, install the correct PyTorch libraries for CUDA 12.x
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Then, install the remaining application-specific requirements
 pip install -r requirements.txt
 
 # Install optional performance libraries
