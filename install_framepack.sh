@@ -69,7 +69,6 @@ log "Installing performance optimization libraries..."
 # flash-attn requires --no-build-isolation to find torch
 pip install xformers
 pip install flash-attn --no-build-isolation
-# sage-attention is no longer available and has been removed.
 
 # 8. Create Launcher Script
 log "Creating launcher script at $HOME/launch_framepack.sh"
