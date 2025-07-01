@@ -122,7 +122,6 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Acknowledgments
 
-- [TRELLIS](https://github.com/microsoft/trellis)
 - [FramePack](https://github.com/lllyasviel/FramePack)
 - [Stable Diffusion WebUI (AUTOMATIC1111)](https://github.com/AUTOMATIC1111/stable-diffusion-webui)
 - [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
